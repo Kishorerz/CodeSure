@@ -1,49 +1,17 @@
-package com.codesure.backend.repository.entity;
+package com.codesure.backend.repository.dto;
 
-import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@Entity
-@Table(name = "repositories")
-public class Repository {
+public class RepositoryResponse {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
-
-    @Column(nullable = false)
     private String name;
-
-    @Column(name = "repository_url", nullable = false, unique = true)
     private String repositoryUrl;
-
-    @Column(nullable = false)
     private String provider;
-
-    @Column(name = "default_branch", nullable = false)
     private String defaultBranch;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
-    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
-
-    public Repository() {
-    }
-
-    @PrePersist
-    protected void onCreate() {
-        LocalDateTime now = LocalDateTime.now();
-        this.createdAt = now;
-        this.updatedAt = now;
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        this.updatedAt = LocalDateTime.now();
-    }
 
     public UUID getId() {
         return id;
@@ -73,6 +41,10 @@ public class Repository {
         return updatedAt;
     }
 
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
     public void setName(String name) {
         this.name = name;
     }
@@ -87,5 +59,13 @@ public class Repository {
 
     public void setDefaultBranch(String defaultBranch) {
         this.defaultBranch = defaultBranch;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
     }
 }
