@@ -51,7 +51,7 @@ public class PullRequest {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
-    protected PullRequest() {
+    public PullRequest() {
     }
 
     @PrePersist

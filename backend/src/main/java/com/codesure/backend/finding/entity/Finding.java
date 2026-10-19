@@ -52,7 +52,7 @@ public class Finding {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
-    protected Finding() {
+    public Finding() {
     }
 
     @PrePersist

@@ -47,7 +47,7 @@ public class Commit {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
-    protected Commit() {
+    public Commit() {
     }
 
     @PrePersist

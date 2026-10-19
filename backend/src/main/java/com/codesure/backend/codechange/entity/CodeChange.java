@@ -45,7 +45,7 @@ public class CodeChange {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    protected CodeChange() {
+    public CodeChange() {
     }
 
     @PrePersist
