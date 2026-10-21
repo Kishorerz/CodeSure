@@ -44,7 +44,8 @@ interface RiskAssessment {
   aiExplanation: string;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const rawApiBase = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE = rawApiBase.replace(/\/+$/, "");
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState("Checking...");
@@ -58,15 +59,31 @@ export default function App() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [riskAssessment, setRiskAssessment] = useState<RiskAssessment | null>(null);
 
-  // Health Check
+  // Health Check with auto-retry for Render cold starts
   useEffect(() => {
-    fetch(`${API_BASE}/api/health`)
-      .then((res) => (res.ok ? res.json() : Promise.reject("Down")))
-      .then((data) => {
-        if (data.status === "UP") setBackendStatus("Connected");
-        else setBackendStatus("Unavailable");
-      })
-      .catch(() => setBackendStatus("Disconnected"));
+    let timer: ReturnType<typeof setTimeout>;
+
+    const checkHealth = () => {
+      fetch(`${API_BASE}/api/health`)
+        .then((res) => {
+          if (!res.ok) throw new Error("HTTP error " + res.status);
+          return res.json();
+        })
+        .then((data) => {
+          if (data && data.status === "UP") {
+            setBackendStatus("Connected");
+          } else {
+            setBackendStatus("Unavailable");
+          }
+        })
+        .catch(() => {
+          setBackendStatus("Connecting (waking up backend)...");
+          timer = setTimeout(checkHealth, 4000);
+        });
+    };
+
+    checkHealth();
+    return () => clearTimeout(timer);
   }, []);
 
   // Fetch Repositories
