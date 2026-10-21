@@ -44,6 +44,8 @@ interface RiskAssessment {
   aiExplanation: string;
 }
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+
 export default function App() {
   const [backendStatus, setBackendStatus] = useState("Checking...");
   const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -58,7 +60,7 @@ export default function App() {
 
   // Health Check
   useEffect(() => {
-    fetch("http://localhost:8080/api/health")
+    fetch(`${API_BASE}/api/health`)
       .then((res) => (res.ok ? res.json() : Promise.reject("Down")))
       .then((data) => {
         if (data.status === "UP") setBackendStatus("Connected");
@@ -69,7 +71,7 @@ export default function App() {
 
   // Fetch Repositories
   const loadRepositories = () => {
-    fetch("http://localhost:8080/api/repositories")
+    fetch(`${API_BASE}/api/repositories`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data: Repository[]) => {
         setRepositories(data);
@@ -89,13 +91,13 @@ export default function App() {
     setErrorMsg(null);
 
     // Fetch findings
-    fetch(`http://localhost:8080/api/repositories/${repo.id}/findings`)
+    fetch(`${API_BASE}/api/repositories/${repo.id}/findings`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setFindings(data))
       .catch(() => setFindings([]));
 
     // Fetch risk assessment
-    fetch(`http://localhost:8080/api/repositories/${repo.id}/risk-assessment`)
+    fetch(`${API_BASE}/api/repositories/${repo.id}/risk-assessment`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setRiskAssessment(data))
       .catch(() => setRiskAssessment(null));
@@ -108,7 +110,7 @@ export default function App() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch("http://localhost:8080/api/repositories/sync-url", {
+      const res = await fetch(`${API_BASE}/api/repositories/sync-url`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repositoryUrl: repoUrlInput.trim() }),
@@ -125,7 +127,7 @@ export default function App() {
       selectRepository(created);
 
       // Auto sync initial commits
-      await fetch(`http://localhost:8080/api/repositories/${created.id}/sync-commits?limit=15`, {
+      await fetch(`${API_BASE}/api/repositories/${created.id}/sync-commits?limit=15`, {
         method: "POST",
       });
     } catch (err: unknown) {
@@ -143,7 +145,7 @@ export default function App() {
     if (!selectedRepo) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8080/api/repositories/${selectedRepo.id}/sync-commits?limit=15`, {
+      const res = await fetch(`${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?limit=15`, {
         method: "POST",
       });
       if (res.ok) {

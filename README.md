@@ -179,3 +179,28 @@ Open `http://localhost:5173` in your browser.
 | `GET` | `/api/repositories/{id}/findings` | Retrieve all static analysis findings |
 | `GET` | `/api/repositories/{id}/risk-assessment` | Compute live risk score and AI explanation |
 | `POST` | `/api/analyzer/scan-change/{id}` | Run static analyzer on a specific change patch |
+
+
+---
+
+## Deploying to Render
+
+This repository includes a multi-stage `Dockerfile` and `render.yaml` Blueprint for 1-click or manual deployment to [Render](https://render.com).
+
+### Option A: 1-Click Blueprint (Recommended)
+1. In your Render Dashboard, click **New +** -> **Blueprint**.
+2. Connect your GitHub repository (`Kishorerz/CodeSure`).
+3. Render will read `render.yaml` and automatically configure:
+   - A **PostgreSQL Database** (`codesure-postgres`)
+   - A unified **Docker Web Service** (`codesure-app`) serving both the backend API and the React frontend on a single port.
+4. Click **Apply**.
+
+### Option B: Manual Web Service
+1. On Render, click **New +** -> **Web Service**.
+2. Select your repository.
+3. Runtime: **Docker**.
+4. Set the Health Check Path to: `/api/health`.
+5. Environment Variables:
+   - `SPRING_PROFILES_ACTIVE`: `prod`
+   - `SPRING_JPA_HIBERNATE_DDL_AUTO`: `update`
+   - `DATABASE_URL`: Your PostgreSQL connection string (`postgresql://user:pass@host/db`).
