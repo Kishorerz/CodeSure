@@ -59,7 +59,7 @@ public class GitHubService {
         }
         Matcher matcher = GITHUB_URL_PATTERN.matcher(url.trim());
         if (!matcher.find()) {
-            throw new IllegalArgumentException("Invalid GitHub repository URL: " + url);
+            throw new IllegalArgumentException("Invalid GitHub repository URL: " + url + ". Expected format: https://github.com/owner/repository");
         }
         return new String[]{matcher.group(1), matcher.group(2)};
     }
@@ -69,21 +69,30 @@ public class GitHubService {
         String[] parts = parseOwnerAndRepo(repositoryUrl);
         String owner = parts[0];
         String repoName = parts[1];
-
-        GitHubRepoResponse ghRepo = gitHubClient.getRepository(owner, repoName);
-        if (ghRepo == null) {
-            throw new IllegalArgumentException("Could not retrieve repository info from GitHub: " + repositoryUrl);
-        }
-
-        String canonicalUrl = ghRepo.getHtmlUrl() != null ? ghRepo.getHtmlUrl() : ("https://github.com/" + owner + "/" + repoName);
+        String canonicalUrl = "https://github.com/" + owner + "/" + repoName;
 
         Repository repository = repositoryJpaRepository.findByRepositoryUrl(canonicalUrl)
                 .orElseGet(Repository::new);
 
-        repository.setName(ghRepo.getName());
+        String name = repoName;
+        String defaultBranch = "main";
+
+        try {
+            GitHubRepoResponse ghRepo = gitHubClient.getRepository(owner, repoName);
+            if (ghRepo != null) {
+                if (ghRepo.getName() != null) name = ghRepo.getName();
+                if (ghRepo.getHtmlUrl() != null) canonicalUrl = ghRepo.getHtmlUrl();
+                if (ghRepo.getDefaultBranch() != null) defaultBranch = ghRepo.getDefaultBranch();
+            }
+        } catch (Exception e) {
+            // Log fallback when GitHub API is rate-limited or unreachable
+            System.err.println("Notice: GitHub API fetch returned (" + e.getMessage() + "), using parsed URL fallback for " + canonicalUrl);
+        }
+
+        repository.setName(name);
         repository.setRepositoryUrl(canonicalUrl);
         repository.setProvider("GITHUB");
-        repository.setDefaultBranch(ghRepo.getDefaultBranch() != null ? ghRepo.getDefaultBranch() : "main");
+        repository.setDefaultBranch(defaultBranch);
 
         return repositoryJpaRepository.save(repository);
     }
@@ -94,7 +103,13 @@ public class GitHubService {
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
 
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
-        List<GitHubCommitResponse> ghCommits = gitHubClient.getCommits(parts[0], parts[1], limit > 0 ? limit : 20);
+        List<GitHubCommitResponse> ghCommits = null;
+        try {
+            ghCommits = gitHubClient.getCommits(parts[0], parts[1], limit > 0 ? limit : 20);
+        } catch (Exception e) {
+            System.err.println("Notice: GitHub commit sync failed (" + e.getMessage() + "), returning existing commits.");
+            return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+        }
 
         List<Commit> savedCommits = new ArrayList<>();
         if (ghCommits == null) {
@@ -152,7 +167,13 @@ public class GitHubService {
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
 
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
-        List<GitHubPullRequestResponse> ghPrs = gitHubClient.getPullRequests(parts[0], parts[1], "all");
+        List<GitHubPullRequestResponse> ghPrs = null;
+        try {
+            ghPrs = gitHubClient.getPullRequests(parts[0], parts[1], "all");
+        } catch (Exception e) {
+            System.err.println("Notice: GitHub PR sync failed (" + e.getMessage() + "), returning existing PRs.");
+            return pullRequestJpaRepository.findByRepositoryIdOrderByPrNumberDesc(repositoryId);
+        }
 
         List<PullRequest> savedPrs = new ArrayList<>();
         if (ghPrs == null) return savedPrs;
@@ -194,13 +215,18 @@ public class GitHubService {
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
 
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
-        GitHubCompareResponse compare = gitHubClient.compareCommits(parts[0], parts[1], baseSha, targetSha);
+        GitHubCompareResponse compare = null;
+        try {
+            compare = gitHubClient.compareCommits(parts[0], parts[1], baseSha, targetSha);
+        } catch (Exception e) {
+            System.err.println("Notice: GitHub commit compare failed (" + e.getMessage() + ").");
+            return List.of();
+        }
 
         if (compare == null || compare.getFiles() == null) {
             return List.of();
         }
 
-        // Ensure target commit is persisted
         Commit targetCommit = commitJpaRepository.findByRepositoryIdAndSha(repositoryId, targetSha)
                 .orElseGet(() -> {
                     Commit c = new Commit();

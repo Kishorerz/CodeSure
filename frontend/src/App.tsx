@@ -134,8 +134,14 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err || "Failed to register repository");
+        let errText = "Failed to register repository";
+        try {
+          const errJson = await res.json();
+          errText = errJson.message || errJson.error || errText;
+        } catch {
+          errText = await res.text();
+        }
+        throw new Error(errText);
       }
 
       const created: Repository = await res.json();
