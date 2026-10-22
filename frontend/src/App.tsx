@@ -61,6 +61,62 @@ interface RiskAssessment {
   prioritizedFindings?: PrioritizedFinding[];
 }
 
+interface ChurnWindow {
+  windowName: string;
+  commitCount: number;
+  additions: number;
+  deletions: number;
+  totalChurn: number;
+  activeAuthors: number;
+}
+
+interface FileHotspot {
+  filePath: string;
+  changeCount: number;
+  additions: number;
+  deletions: number;
+  totalChurn: number;
+  findingsCount: number;
+  criticalFindings: number;
+  highFindings: number;
+  mediumFindings: number;
+  lowFindings: number;
+  hotspotScore: number;
+  riskLevel: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  recommendation: string;
+}
+
+interface DailyActivity {
+  date: string;
+  commitCount: number;
+  additions: number;
+  deletions: number;
+  totalChurn: number;
+}
+
+interface AuthorMetric {
+  authorName: string;
+  commitCount: number;
+  additions: number;
+  deletions: number;
+  totalChurn: number;
+  churnPercentage: number;
+}
+
+interface HistoricalMetrics {
+  repositoryId: string;
+  repositoryName: string;
+  branch: string;
+  churn7Days: ChurnWindow;
+  churn30Days: ChurnWindow;
+  churnAllTime: ChurnWindow;
+  repositoryStabilityIndex: number;
+  stabilityAssessment: string;
+  topHotspots: FileHotspot[];
+  dailyTimeline: DailyActivity[];
+  topAuthors: AuthorMetric[];
+}
+
 const rawApiBase = import.meta.env.VITE_API_BASE_URL || "";
 const API_BASE = rawApiBase.replace(/\/+$/, "");
 
@@ -88,7 +144,9 @@ export default function App() {
   const [commits, setCommits] = useState<Commit[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [riskAssessment, setRiskAssessment] = useState<RiskAssessment | null>(null);
-  const [activeTab, setActiveTab] = useState<"priorities" | "commits" | "allFindings">("priorities");
+  const [historicalMetrics, setHistoricalMetrics] = useState<HistoricalMetrics | null>(null);
+  const [loadingMetrics, setLoadingMetrics] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<"priorities" | "historical" | "commits" | "allFindings">("priorities");
 
   // Build headers with optional X-GitHub-Token
   const getHeaders = (extra: Record<string, string> = {}) => {
@@ -174,6 +232,14 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setRiskAssessment(data))
       .catch(() => setRiskAssessment(null));
+
+    // Fetch branch historical & churn metrics
+    setLoadingMetrics(true);
+    fetch(`${API_BASE}/api/repositories/${repoId}/historical-metrics?branch=${encodedBranch}`, { headers: getHeaders() })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setHistoricalMetrics(data))
+      .catch(() => setHistoricalMetrics(null))
+      .finally(() => setLoadingMetrics(false));
   };
 
   const fetchBranches = async (repo: Repository) => {
@@ -298,6 +364,7 @@ export default function App() {
           setCommits([]);
           setFindings([]);
           setRiskAssessment(null);
+          setHistoricalMetrics(null);
           setBranches([]);
         }
       }
@@ -394,6 +461,13 @@ export default function App() {
     if (rank === 2) return "priority-rank rank-2";
     if (rank <= 4) return "priority-rank rank-3";
     return "priority-rank rank-default";
+  };
+
+  const getStabilityClass = (score: number) => {
+    if (score >= 80) return "stable";
+    if (score >= 60) return "moderate";
+    if (score >= 40) return "elevated";
+    return "critical";
   };
 
   const prioritizedList = riskAssessment?.prioritizedFindings || [];
@@ -698,6 +772,12 @@ export default function App() {
                   Prioritized Action Items ({prioritizedList.length})
                 </button>
                 <button
+                  className={`tab-btn ${activeTab === "historical" ? "active" : ""}`}
+                  onClick={() => setActiveTab("historical")}
+                >
+                  Historical Churn & Hotspots {historicalMetrics ? `(${historicalMetrics.topHotspots.length})` : ""}
+                </button>
+                <button
                   className={`tab-btn ${activeTab === "commits" ? "active" : ""}`}
                   onClick={() => setActiveTab("commits")}
                 >
@@ -803,7 +883,233 @@ export default function App() {
                 </section>
               )}
 
-              {/* TAB 2: BRANCH COMMIT HISTORY */}
+              {/* TAB: HISTORICAL CHURN & FILE HOTSPOTS */}
+              {activeTab === "historical" && (
+                <section className="historical-section">
+                  <div className="section-intro">
+                    <h3>Historical Churn & File Hotspot Intelligence ({selectedBranch})</h3>
+                    <p>
+                      Time-windowed code churn analytics, defect density correlation, and predictive hotspot analysis across commits on branch <strong>{selectedBranch}</strong>.
+                    </p>
+                  </div>
+
+                  {loadingMetrics ? (
+                    <div className="empty-state-card">
+                      <p>Calculating historical metrics, time-window churn, and file hotspots...</p>
+                    </div>
+                  ) : !historicalMetrics ? (
+                    <div className="empty-state-card">
+                      <p>No historical metrics available yet. Ingest commits or switch branches to generate churn analytics.</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Stability Index & Health Banner */}
+                      <div className="stability-banner">
+                        <div className="stability-score-box">
+                          <span className="stability-label">Stability Health Index</span>
+                          <div className="stability-value">
+                            {historicalMetrics.repositoryStabilityIndex}
+                            <span className="stability-max">/100</span>
+                          </div>
+                          <span className={`stability-tag ${getStabilityClass(historicalMetrics.repositoryStabilityIndex)}`}>
+                            {historicalMetrics.stabilityAssessment}
+                          </span>
+                        </div>
+                        <div className="stability-explanation">
+                          <h4>Risk Volatility & Health Assessment</h4>
+                          <p>
+                            Evaluates code volatility by correlating 7-day vs 30-day line churn velocity against static defect density.
+                            Higher scores indicate controlled code changes and minimal critical findings.
+                          </p>
+                          <div className="stability-meta">
+                            <span>Branch: <strong>{historicalMetrics.branch}</strong></span>
+                            <span>Top Hotspots Identified: <strong>{historicalMetrics.topHotspots.length}</strong></span>
+                            <span>Active Contributors: <strong>{historicalMetrics.topAuthors.length}</strong></span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Time-Windowed Churn Summary Cards */}
+                      <h4 className="sub-heading">Time-Windowed Code Churn</h4>
+                      <div className="churn-cards-grid">
+                        <div className="churn-card">
+                          <div className="churn-card-header">
+                            <span className="window-pill">7-Day Velocity</span>
+                            <span className="commits-count">{historicalMetrics.churn7Days.commitCount} Commits</span>
+                          </div>
+                          <div className="churn-total">{historicalMetrics.churn7Days.totalChurn.toLocaleString()} <span className="churn-unit">lines churned</span></div>
+                          <div className="churn-diff">
+                            <span className="additions text-success">+{historicalMetrics.churn7Days.additions.toLocaleString()}</span>
+                            <span className="deletions text-danger">-{historicalMetrics.churn7Days.deletions.toLocaleString()}</span>
+                          </div>
+                          <div className="churn-footer">
+                            <span>{historicalMetrics.churn7Days.activeAuthors} active author{historicalMetrics.churn7Days.activeAuthors === 1 ? "" : "s"}</span>
+                          </div>
+                        </div>
+
+                        <div className="churn-card">
+                          <div className="churn-card-header">
+                            <span className="window-pill">30-Day Window</span>
+                            <span className="commits-count">{historicalMetrics.churn30Days.commitCount} Commits</span>
+                          </div>
+                          <div className="churn-total">{historicalMetrics.churn30Days.totalChurn.toLocaleString()} <span className="churn-unit">lines churned</span></div>
+                          <div className="churn-diff">
+                            <span className="additions text-success">+{historicalMetrics.churn30Days.additions.toLocaleString()}</span>
+                            <span className="deletions text-danger">-{historicalMetrics.churn30Days.deletions.toLocaleString()}</span>
+                          </div>
+                          <div className="churn-footer">
+                            <span>{historicalMetrics.churn30Days.activeAuthors} active author{historicalMetrics.churn30Days.activeAuthors === 1 ? "" : "s"}</span>
+                          </div>
+                        </div>
+
+                        <div className="churn-card highlight">
+                          <div className="churn-card-header">
+                            <span className="window-pill highlight">All-Time Lifetime</span>
+                            <span className="commits-count">{historicalMetrics.churnAllTime.commitCount} Commits</span>
+                          </div>
+                          <div className="churn-total">{historicalMetrics.churnAllTime.totalChurn.toLocaleString()} <span className="churn-unit">lines churned</span></div>
+                          <div className="churn-diff">
+                            <span className="additions text-success">+{historicalMetrics.churnAllTime.additions.toLocaleString()}</span>
+                            <span className="deletions text-danger">-{historicalMetrics.churnAllTime.deletions.toLocaleString()}</span>
+                          </div>
+                          <div className="churn-footer">
+                            <span>{historicalMetrics.churnAllTime.activeAuthors} total author{historicalMetrics.churnAllTime.activeAuthors === 1 ? "" : "s"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* File Hotspots Table */}
+                      <div className="hotspots-section">
+                        <div className="hotspots-header">
+                          <div>
+                            <h4 className="sub-heading">File Hotspot Intelligence</h4>
+                            <p className="sub-desc">
+                              Files ranked by change frequency (velocity) and accumulated defect density. Files at the top represent the highest regression and security risks.
+                            </p>
+                          </div>
+                        </div>
+
+                        {historicalMetrics.topHotspots.length === 0 ? (
+                          <div className="empty-state-card">
+                            <p>No hotspots detected. Repository changes are evenly distributed with zero defect concentration.</p>
+                          </div>
+                        ) : (
+                          <div className="hotspots-table-wrap">
+                            <table className="hotspots-table">
+                              <thead>
+                                <tr>
+                                  <th>File Path</th>
+                                  <th>Risk Level</th>
+                                  <th>Hotspot Score</th>
+                                  <th>Changes</th>
+                                  <th>Lines Churned</th>
+                                  <th>Defects Found</th>
+                                  <th>Prescriptive Recommendation</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {historicalMetrics.topHotspots.map((h, idx) => (
+                                  <tr key={idx} className={`hotspot-row-${h.riskLevel.toLowerCase()}`}>
+                                    <td className="hotspot-filepath">
+                                      <code>{h.filePath}</code>
+                                    </td>
+                                    <td>
+                                      <span className={getSeverityBadgeClass(h.riskLevel)}>
+                                        {h.riskLevel}
+                                      </span>
+                                    </td>
+                                    <td className="hotspot-score-cell">
+                                      <strong>{h.hotspotScore}</strong>
+                                    </td>
+                                    <td>
+                                      <span className="change-count-badge">{h.changeCount} commit{h.changeCount === 1 ? "" : "s"}</span>
+                                    </td>
+                                    <td className="churn-cell">
+                                      <span className="text-success">+{h.additions}</span> / <span className="text-danger">-{h.deletions}</span>
+                                    </td>
+                                    <td>
+                                      {h.findingsCount > 0 ? (
+                                        <span className="findings-indicator">
+                                          {h.criticalFindings > 0 && <span className="finding-chip crit">{h.criticalFindings} Crit</span>}
+                                          {h.highFindings > 0 && <span className="finding-chip high">{h.highFindings} High</span>}
+                                          {h.mediumFindings > 0 && <span className="finding-chip med">{h.mediumFindings} Med</span>}
+                                          {h.lowFindings > 0 && <span className="finding-chip low">{h.lowFindings} Low</span>}
+                                        </span>
+                                      ) : (
+                                        <span className="text-muted">0 findings</span>
+                                      )}
+                                    </td>
+                                    <td className="recommendation-cell">
+                                      <span className="remediation-text">{h.recommendation}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Daily Activity Timeline & Top Contributors Grid */}
+                      <div className="metrics-columns">
+                        {/* Daily Timeline */}
+                        <div className="metric-col">
+                          <h4 className="sub-heading">Activity & Churn Timeline (Past Commits)</h4>
+                          {historicalMetrics.dailyTimeline.length === 0 ? (
+                            <p className="text-muted">No timeline data available.</p>
+                          ) : (
+                            <div className="timeline-list">
+                              {historicalMetrics.dailyTimeline.map((d, idx) => (
+                                <div key={idx} className="timeline-row">
+                                  <div className="timeline-date">{d.date}</div>
+                                  <div className="timeline-commits-badge">{d.commitCount} {d.commitCount === 1 ? "commit" : "commits"}</div>
+                                  <div className="timeline-churn">
+                                    <span className="text-success">+{d.additions}</span> / <span className="text-danger">-{d.deletions}</span>
+                                    <span className="churn-bar-indicator">({d.totalChurn} lines)</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Top Contributors */}
+                        <div className="metric-col">
+                          <h4 className="sub-heading">Contributor Churn Distribution</h4>
+                          {historicalMetrics.topAuthors.length === 0 ? (
+                            <p className="text-muted">No author metrics available.</p>
+                          ) : (
+                            <div className="authors-list">
+                              {historicalMetrics.topAuthors.map((a, idx) => (
+                                <div key={idx} className="author-card">
+                                  <div className="author-info">
+                                    <span className="author-name">{a.authorName}</span>
+                                    <span className="author-pct">{a.churnPercentage}% of churn</span>
+                                  </div>
+                                  <div className="author-details">
+                                    <span>{a.commitCount} commit{a.commitCount === 1 ? "" : "s"}</span>
+                                    <span>
+                                      <span className="text-success">+{a.additions}</span> / <span className="text-danger">-{a.deletions}</span>
+                                    </span>
+                                  </div>
+                                  <div className="author-churn-bar-bg">
+                                    <div
+                                      className="author-churn-bar-fill"
+                                      style={{ width: `${Math.min(100, Math.max(8, a.churnPercentage))}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
+              {/* TAB 3: BRANCH COMMIT HISTORY */}
               {activeTab === "commits" && (
                 <section className="commits-history-section">
                   <div className="section-intro">

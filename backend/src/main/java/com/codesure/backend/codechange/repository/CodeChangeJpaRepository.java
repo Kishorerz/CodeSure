@@ -12,4 +12,6 @@ import java.util.UUID;
 public interface CodeChangeJpaRepository extends JpaRepository<CodeChange, UUID> {
     Optional<CodeChange> findByCommitIdAndFilePath(UUID commitId, String filePath);
     List<CodeChange> findByCommitId(UUID commitId);
+    List<CodeChange> findByCommitIdIn(List<UUID> commitIds);
+    List<CodeChange> findByCommitRepositoryId(UUID repositoryId);
 }
