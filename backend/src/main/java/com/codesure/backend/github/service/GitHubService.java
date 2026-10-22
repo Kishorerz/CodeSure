@@ -20,7 +20,9 @@ import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -111,26 +113,38 @@ public class GitHubService {
         Repository repository = repositoryJpaRepository.findById(repositoryId)
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
 
+        Set<String> branchSet = new LinkedHashSet<>();
+        String def = repository.getDefaultBranch() != null ? repository.getDefaultBranch() : "main";
+        branchSet.add(def);
+
+        // Include any branches already recorded in DB
+        try {
+            List<String> dbBranches = commitJpaRepository.findDistinctBranchesByRepositoryId(repositoryId);
+            if (dbBranches != null) {
+                for (String dbBranch : dbBranches) {
+                    if (dbBranch != null && !dbBranch.trim().isEmpty()) {
+                        branchSet.add(dbBranch.trim());
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // Fetch live branches from GitHub
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
-        List<String> branchNames = new ArrayList<>();
         try {
             List<GitHubBranchResponse> ghBranches = gitHubClient.getBranches(parts[0], parts[1]);
             if (ghBranches != null && !ghBranches.isEmpty()) {
                 for (GitHubBranchResponse b : ghBranches) {
-                    if (b.getName() != null && !b.getName().trim().isEmpty()) {
-                        branchNames.add(b.getName().trim());
+                    if (b != null && b.getName() != null && !b.getName().trim().isEmpty()) {
+                        branchSet.add(b.getName().trim());
                     }
                 }
             }
         } catch (Exception e) {
-            System.err.println("Notice: Could not list branches from GitHub (" + e.getMessage() + "), using fallback.");
+            System.err.println("Notice: Could not list branches from GitHub (" + e.getMessage() + "), using cached and fallback branches.");
         }
 
-        String def = repository.getDefaultBranch() != null ? repository.getDefaultBranch() : "main";
-        if (!branchNames.contains(def)) {
-            branchNames.add(0, def);
-        }
-        return branchNames;
+        return new ArrayList<>(branchSet);
     }
 
     @Transactional

@@ -17,4 +17,7 @@ public interface CommitJpaRepository extends JpaRepository<Commit, UUID> {
 
     @Query("SELECT DISTINCT c FROM Commit c JOIN c.branches b WHERE c.repository.id = :repoId AND b = :branch ORDER BY c.committedAt DESC")
     List<Commit> findByRepositoryIdAndBranch(@Param("repoId") UUID repoId, @Param("branch") String branch);
+
+    @Query("SELECT DISTINCT b FROM Commit c JOIN c.branches b WHERE c.repository.id = :repoId")
+    List<String> findDistinctBranchesByRepositoryId(@Param("repoId") UUID repoId);
 }

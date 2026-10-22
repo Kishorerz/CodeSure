@@ -15,13 +15,14 @@ import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class GitHubClient {
 
     private final RestTemplate restTemplate;
 
-    @Value("${codesure.github.token:}")
+    @Value("${codesure.github.token:${GITHUB_TOKEN:}}")
     private String githubToken;
 
     public GitHubClient() {
@@ -53,10 +54,25 @@ public class GitHubClient {
     public List<GitHubBranchResponse> getBranches(String owner, String repo) {
         String url = String.format("https://api.github.com/repos/%s/%s/branches?per_page=100", owner, repo);
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<List<GitHubBranchResponse>> response = restTemplate.exchange(
-                url, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {}
-        );
-        return response.getBody() != null ? response.getBody() : new ArrayList<>();
+        try {
+            ResponseEntity<Map[]> response = restTemplate.exchange(
+                    url, HttpMethod.GET, entity, Map[].class
+            );
+            List<GitHubBranchResponse> result = new ArrayList<>();
+            if (response.getBody() != null) {
+                for (Map item : response.getBody()) {
+                    if (item.containsKey("name") && item.get("name") != null) {
+                        GitHubBranchResponse b = new GitHubBranchResponse();
+                        b.setName(item.get("name").toString());
+                        result.add(b);
+                    }
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            System.err.println("GitHub getBranches notice: " + e.getMessage());
+            return new ArrayList<>();
+        }
     }
 
     public List<GitHubCommitResponse> getCommits(String owner, String repo, int perPage) {
@@ -78,7 +94,7 @@ public class GitHubClient {
         }
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
         ResponseEntity<List<GitHubCommitResponse>> response = restTemplate.exchange(
-                url, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {}
+                url, HttpMethod.GET, entity, new ParameterizedTypeReference<List<GitHubCommitResponse>>() {}
         );
         return response.getBody();
     }
@@ -133,7 +149,7 @@ public class GitHubClient {
         String url = String.format("https://api.github.com/repos/%s/%s/pulls?state=%s", owner, repo, state);
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
         ResponseEntity<List<GitHubPullRequestResponse>> response = restTemplate.exchange(
-                url, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {}
+                url, HttpMethod.GET, entity, new ParameterizedTypeReference<List<GitHubPullRequestResponse>>() {}
         );
         return response.getBody();
     }

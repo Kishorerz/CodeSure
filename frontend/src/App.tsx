@@ -77,6 +77,8 @@ export default function App() {
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string>("main");
   const [loadingBranches, setLoadingBranches] = useState<boolean>(false);
+  const [customBranchInput, setCustomBranchInput] = useState<string>("");
+  const [showCustomBranch, setShowCustomBranch] = useState<boolean>(false);
 
   const [commits, setCommits] = useState<Commit[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -149,36 +151,40 @@ export default function App() {
       .catch(() => setRiskAssessment(null));
   };
 
-  const selectRepository = async (repo: Repository, branchToSelect?: string) => {
-    setSelectedRepo(repo);
-    setErrorMsg(null);
-
-    const initialBranch = branchToSelect || repo.defaultBranch || "main";
-    setSelectedBranch(initialBranch);
-
-    // Fetch available branches for this repo
+  const fetchBranches = async (repo: Repository) => {
     setLoadingBranches(true);
-    let effectiveBranch = initialBranch;
     try {
       const res = await fetch(`${API_BASE}/api/repositories/${repo.id}/branches`);
       if (res.ok) {
         const branchList: string[] = await res.json();
         if (branchList && branchList.length > 0) {
           setBranches(branchList);
-          if (!branchList.includes(initialBranch)) {
-            effectiveBranch = branchList[0];
-            setSelectedBranch(effectiveBranch);
-          }
-        } else {
-          setBranches([initialBranch]);
+          return branchList;
         }
-      } else {
-        setBranches([initialBranch]);
       }
     } catch {
-      setBranches([initialBranch]);
+      // Fallback handled below
     } finally {
       setLoadingBranches(false);
+    }
+    const def = [repo.defaultBranch || "main"];
+    setBranches(def);
+    return def;
+  };
+
+  const selectRepository = async (repo: Repository, branchToSelect?: string) => {
+    setSelectedRepo(repo);
+    setErrorMsg(null);
+    setShowCustomBranch(false);
+
+    const initialBranch = branchToSelect || repo.defaultBranch || "main";
+    setSelectedBranch(initialBranch);
+
+    const branchList = await fetchBranches(repo);
+    let effectiveBranch = initialBranch;
+    if (branchList.length > 0 && !branchList.includes(initialBranch)) {
+      effectiveBranch = branchList[0];
+      setSelectedBranch(effectiveBranch);
     }
 
     loadBranchData(repo.id, effectiveBranch);
@@ -225,23 +231,39 @@ export default function App() {
 
   const handleSwitchAndAnalyzeBranch = async (targetBranch: string) => {
     if (!selectedRepo) return;
-    setSelectedBranch(targetBranch);
+    const cleanBranch = targetBranch.trim();
+    if (!cleanBranch) return;
+
+    setSelectedBranch(cleanBranch);
+    if (!branches.includes(cleanBranch)) {
+      setBranches((prev) => [...prev, cleanBranch]);
+    }
+
     setLoadingCommits(true);
     try {
       const res = await fetch(
-        `${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?branch=${encodeURIComponent(targetBranch)}&limit=30`,
+        `${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?branch=${encodeURIComponent(cleanBranch)}&limit=30`,
         { method: "POST" }
       );
       if (res.ok) {
         const data: Commit[] = await res.json();
         setCommits(data);
       }
-      loadBranchData(selectedRepo.id, targetBranch);
+      loadBranchData(selectedRepo.id, cleanBranch);
     } catch (err) {
       console.error(err);
     } finally {
       setLoadingCommits(false);
     }
+  };
+
+  const handleCustomBranchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customBranchInput.trim()) return;
+    const branch = customBranchInput.trim();
+    handleSwitchAndAnalyzeBranch(branch);
+    setCustomBranchInput("");
+    setShowCustomBranch(false);
   };
 
   const getSeverityBadgeClass = (severity: string) => {
@@ -348,29 +370,72 @@ export default function App() {
                 <div className="branch-switcher-bar">
                   <div className="branch-selector-group">
                     <span className="branch-icon">🌿</span>
-                    <label htmlFor="branch-select" className="branch-label">Switch Branch:</label>
+                    <label htmlFor="branch-select" className="branch-label">Branch:</label>
                     <select
                       id="branch-select"
                       className="branch-select"
                       value={selectedBranch}
                       disabled={loadingBranches || loadingCommits}
-                      onChange={(e) => handleSwitchAndAnalyzeBranch(e.target.value)}
+                      onChange={(e) => {
+                        if (e.target.value === "__custom__") {
+                          setShowCustomBranch(true);
+                        } else {
+                          handleSwitchAndAnalyzeBranch(e.target.value);
+                        }
+                      }}
                     >
                       {branches.map((b) => (
                         <option key={b} value={b}>
                           {b} {b === selectedRepo.defaultBranch ? "(default)" : ""}
                         </option>
                       ))}
+                      <option value="__custom__">+ Enter Custom Branch...</option>
                     </select>
+
                     <button
                       type="button"
                       className="btn-switch-branch"
                       disabled={loadingCommits}
                       onClick={() => handleSwitchAndAnalyzeBranch(selectedBranch)}
                     >
-                      {loadingCommits ? "Analyzing..." : "Switch & Analyze Branch"}
+                      {loadingCommits ? "Analyzing..." : "Analyze Active Branch"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn-outline-small"
+                      onClick={() => setShowCustomBranch(!showCustomBranch)}
+                    >
+                      {showCustomBranch ? "Cancel" : "+ Custom Branch"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn-icon-refresh"
+                      title="Refresh remote branches from GitHub"
+                      disabled={loadingBranches}
+                      onClick={() => selectedRepo && fetchBranches(selectedRepo)}
+                    >
+                      {loadingBranches ? "..." : "↻"}
                     </button>
                   </div>
+
+                  {showCustomBranch && (
+                    <form onSubmit={handleCustomBranchSubmit} className="custom-branch-form">
+                      <input
+                        type="text"
+                        placeholder="e.g. develop, feature/auth, bugfix/login"
+                        value={customBranchInput}
+                        onChange={(e) => setCustomBranchInput(e.target.value)}
+                        className="custom-branch-input"
+                        autoFocus
+                      />
+                      <button type="submit" disabled={!customBranchInput.trim() || loadingCommits} className="btn-switch-branch">
+                        Switch & Analyze
+                      </button>
+                    </form>
+                  )}
+
                   <div className="branch-info-banner">
                     <span className="branch-badge">Active: {selectedBranch}</span>
                     <span className="branch-hint">
@@ -551,7 +616,7 @@ export default function App() {
 
                   {commits.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>No commits ingested yet for branch '{selectedBranch}'. Click "Switch & Analyze Branch" above.</p>
+                      <p>No commits ingested yet for branch '{selectedBranch}'. Click "Analyze Active Branch" above.</p>
                     </div>
                   ) : (
                     <div className="commits-table-wrap">
