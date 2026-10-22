@@ -4,6 +4,7 @@ import com.codesure.backend.codechange.entity.CodeChange;
 import com.codesure.backend.commit.entity.Commit;
 import com.codesure.backend.finding.entity.Finding;
 import com.codesure.backend.finding.repository.FindingJpaRepository;
+import com.codesure.backend.github.client.GitHubClient;
 import com.codesure.backend.github.service.GitHubService;
 import com.codesure.backend.pullrequest.entity.PullRequest;
 import com.codesure.backend.repository.entity.Repository;
@@ -23,15 +24,18 @@ public class GitHubIntegrationController {
     private final GitHubService gitHubService;
     private final RiskEngineService riskEngineService;
     private final FindingJpaRepository findingJpaRepository;
+    private final GitHubClient gitHubClient;
 
     public GitHubIntegrationController(
             GitHubService gitHubService,
             RiskEngineService riskEngineService,
-            FindingJpaRepository findingJpaRepository
+            FindingJpaRepository findingJpaRepository,
+            GitHubClient gitHubClient
     ) {
         this.gitHubService = gitHubService;
         this.riskEngineService = riskEngineService;
         this.findingJpaRepository = findingJpaRepository;
+        this.gitHubClient = gitHubClient;
     }
 
     @PostMapping("/sync-url")
@@ -101,5 +105,19 @@ public class GitHubIntegrationController {
             @RequestParam(required = false) String branch
     ) {
         return riskEngineService.calculateRepositoryRisk(id, branch);
+    }
+
+    @PostMapping("/github-token")
+    public Map<String, Object> setGitHubToken(@RequestBody Map<String, String> body) {
+        String token = body.get("token");
+        gitHubClient.setGithubToken(token != null && !token.trim().isEmpty() ? token.trim() : null);
+        return Map.of("success", true, "hasToken", token != null && !token.trim().isEmpty());
+    }
+
+    @GetMapping("/github-token/status")
+    public Map<String, Object> getGitHubTokenStatus() {
+        String token = gitHubClient.getGithubToken();
+        boolean hasToken = token != null && !token.trim().isEmpty();
+        return Map.of("hasToken", hasToken);
     }
 }

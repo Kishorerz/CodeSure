@@ -161,6 +161,8 @@ public class GitHubService {
         try {
             int max = limit > 0 ? limit : 30;
             ghCommits = gitHubClient.getAllCommitsUpTo(parts[0], parts[1], targetBranch, max);
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             System.err.println("Notice: GitHub commit sync failed for branch " + targetBranch + " (" + e.getMessage() + "), returning existing commits.");
             List<Commit> existing = commitJpaRepository.findByRepositoryIdAndBranch(repositoryId, targetBranch);

@@ -38,4 +38,10 @@ public class RepositoryController {
     ) {
         return repositoryService.getRepositoryById(id);
     }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteRepository(@PathVariable UUID id) {
+        repositoryService.deleteRepository(id);
+    }
 }

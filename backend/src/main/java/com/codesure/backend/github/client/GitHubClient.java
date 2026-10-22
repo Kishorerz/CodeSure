@@ -11,7 +11,10 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,12 +35,34 @@ public class GitHubClient {
         this.restTemplate = new RestTemplate(factory);
     }
 
+    public void setGithubToken(String token) {
+        this.githubToken = token;
+    }
+
+    public String getGithubToken() {
+        return this.githubToken;
+    }
+
+    private String resolveToken() {
+        try {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null && attrs.getRequest() != null) {
+                String headerToken = attrs.getRequest().getHeader("X-GitHub-Token");
+                if (headerToken != null && !headerToken.trim().isEmpty()) {
+                    return headerToken.trim();
+                }
+            }
+        } catch (Exception ignored) {}
+        return this.githubToken;
+    }
+
     private HttpHeaders createHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.set("Accept", "application/vnd.github.v3+json");
         headers.set("User-Agent", "CodeSure-Risk-Platform");
-        if (githubToken != null && !githubToken.trim().isEmpty()) {
-            headers.set("Authorization", "Bearer " + githubToken.trim());
+        String token = resolveToken();
+        if (token != null && !token.trim().isEmpty()) {
+            headers.set("Authorization", "Bearer " + token.trim());
         }
         return headers;
     }
@@ -45,10 +70,14 @@ public class GitHubClient {
     public GitHubRepoResponse getRepository(String owner, String repo) {
         String url = String.format("https://api.github.com/repos/%s/%s", owner, repo);
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<GitHubRepoResponse> response = restTemplate.exchange(
-                url, HttpMethod.GET, entity, GitHubRepoResponse.class
-        );
-        return response.getBody();
+        try {
+            ResponseEntity<GitHubRepoResponse> response = restTemplate.exchange(
+                    url, HttpMethod.GET, entity, GitHubRepoResponse.class
+            );
+            return response.getBody();
+        } catch (HttpClientErrorException.Forbidden e) {
+            throw new IllegalStateException("GitHub API Rate Limit Exceeded (60/hr). Please provide a GitHub Personal Access Token to get 5,000 requests/hr.");
+        }
     }
 
     public List<GitHubBranchResponse> getBranches(String owner, String repo) {
@@ -69,6 +98,9 @@ public class GitHubClient {
                 }
             }
             return result;
+        } catch (HttpClientErrorException.Forbidden e) {
+            System.err.println("GitHub getBranches: Rate limit 403: " + e.getMessage());
+            throw new IllegalStateException("GitHub API Rate Limit Exceeded (60/hr). Please provide a GitHub Personal Access Token to get 5,000 requests/hr.");
         } catch (Exception e) {
             System.err.println("GitHub getBranches notice: " + e.getMessage());
             return new ArrayList<>();
@@ -119,6 +151,12 @@ public class GitHubClient {
                     break;
                 }
                 page++;
+            } catch (HttpClientErrorException.Forbidden e) {
+                System.err.println("GitHub getAllCommitsUpTo: Rate limit 403: " + e.getMessage());
+                throw new IllegalStateException("GitHub API Rate Limit Exceeded (60/hr). Please provide a GitHub Personal Access Token to get 5,000 requests/hr.");
+            } catch (HttpClientErrorException.NotFound e) {
+                System.err.println("GitHub getAllCommitsUpTo: Branch/Commit not found: " + e.getMessage());
+                throw new IllegalArgumentException("Branch '" + branch + "' was not found in repository " + owner + "/" + repo);
             } catch (Exception e) {
                 System.err.println("Notice: stopped commit pagination at page " + page + ": " + e.getMessage());
                 break;

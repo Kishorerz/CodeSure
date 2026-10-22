@@ -73,6 +73,11 @@ export default function App() {
   const [loadingCommits, setLoadingCommits] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // GitHub Token State (Persisted in localStorage for 5,000 reqs/hr)
+  const [githubToken, setGithubToken] = useState<string>(() => localStorage.getItem("codesure_github_token") || "");
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+
   // Branch switching state
   const [branches, setBranches] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string>("main");
@@ -85,12 +90,32 @@ export default function App() {
   const [riskAssessment, setRiskAssessment] = useState<RiskAssessment | null>(null);
   const [activeTab, setActiveTab] = useState<"priorities" | "commits" | "allFindings">("priorities");
 
+  // Build headers with optional X-GitHub-Token
+  const getHeaders = (extra: Record<string, string> = {}) => {
+    const h: Record<string, string> = { ...extra };
+    if (githubToken.trim()) {
+      h["X-GitHub-Token"] = githubToken.trim();
+    }
+    return h;
+  };
+
+  // Sync token to backend when updated
+  useEffect(() => {
+    if (githubToken) {
+      fetch(`${API_BASE}/api/repositories/github-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: githubToken }),
+      }).catch(() => {});
+    }
+  }, [githubToken]);
+
   // Health Check with auto-retry for Render cold starts
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
 
     const checkHealth = () => {
-      fetch(`${API_BASE}/api/health`)
+      fetch(`${API_BASE}/api/health`, { headers: getHeaders() })
         .then((res) => {
           if (!res.ok) throw new Error("HTTP error " + res.status);
           return res.json();
@@ -114,7 +139,7 @@ export default function App() {
 
   // Fetch Repositories
   const loadRepositories = () => {
-    fetch(`${API_BASE}/api/repositories`)
+    fetch(`${API_BASE}/api/repositories`, { headers: getHeaders() })
       .then((res) => (res.ok ? res.json() : []))
       .then((data: Repository[]) => {
         setRepositories(data);
@@ -133,19 +158,19 @@ export default function App() {
     const encodedBranch = encodeURIComponent(branchName);
 
     // Fetch branch commits
-    fetch(`${API_BASE}/api/repositories/${repoId}/commits?branch=${encodedBranch}`)
+    fetch(`${API_BASE}/api/repositories/${repoId}/commits?branch=${encodedBranch}`, { headers: getHeaders() })
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setCommits(data))
       .catch(() => setCommits([]));
 
     // Fetch branch findings
-    fetch(`${API_BASE}/api/repositories/${repoId}/findings?branch=${encodedBranch}`)
+    fetch(`${API_BASE}/api/repositories/${repoId}/findings?branch=${encodedBranch}`, { headers: getHeaders() })
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setFindings(data))
       .catch(() => setFindings([]));
 
     // Fetch branch risk assessment
-    fetch(`${API_BASE}/api/repositories/${repoId}/risk-assessment?branch=${encodedBranch}`)
+    fetch(`${API_BASE}/api/repositories/${repoId}/risk-assessment?branch=${encodedBranch}`, { headers: getHeaders() })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setRiskAssessment(data))
       .catch(() => setRiskAssessment(null));
@@ -154,16 +179,21 @@ export default function App() {
   const fetchBranches = async (repo: Repository) => {
     setLoadingBranches(true);
     try {
-      const res = await fetch(`${API_BASE}/api/repositories/${repo.id}/branches`);
+      const res = await fetch(`${API_BASE}/api/repositories/${repo.id}/branches`, { headers: getHeaders() });
       if (res.ok) {
         const branchList: string[] = await res.json();
         if (branchList && branchList.length > 0) {
           setBranches(branchList);
           return branchList;
         }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        if (err.message && err.message.includes("Rate Limit")) {
+          setErrorMsg(err.message);
+        }
       }
     } catch {
-      // Fallback handled below
+      // Fallback
     } finally {
       setLoadingBranches(false);
     }
@@ -199,7 +229,7 @@ export default function App() {
     try {
       const res = await fetch(`${API_BASE}/api/repositories/sync-url`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ repositoryUrl: repoUrlInput.trim() }),
       });
 
@@ -229,12 +259,49 @@ export default function App() {
     }
   };
 
+  const handleDeleteRepo = async (repoId: string, repoName: string) => {
+    if (!window.confirm(`Are you sure you want to delete repository "${repoName}" and all its analyzed data?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/repositories/${repoId}`, {
+        method: "DELETE",
+        headers: getHeaders(),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to delete repository");
+      }
+
+      const updated = repositories.filter((r) => r.id !== repoId);
+      setRepositories(updated);
+
+      if (selectedRepo?.id === repoId) {
+        if (updated.length > 0) {
+          selectRepository(updated[0]);
+        } else {
+          setSelectedRepo(null);
+          setCommits([]);
+          setFindings([]);
+          setRiskAssessment(null);
+          setBranches([]);
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrorMsg(err.message);
+      }
+    }
+  };
+
   const handleSwitchAndAnalyzeBranch = async (targetBranch: string) => {
     if (!selectedRepo) return;
     const cleanBranch = targetBranch.trim();
     if (!cleanBranch) return;
 
     setSelectedBranch(cleanBranch);
+    setErrorMsg(null);
     if (!branches.includes(cleanBranch)) {
       setBranches((prev) => [...prev, cleanBranch]);
     }
@@ -243,15 +310,27 @@ export default function App() {
     try {
       const res = await fetch(
         `${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?branch=${encodeURIComponent(cleanBranch)}&limit=30`,
-        { method: "POST" }
+        { method: "POST", headers: getHeaders() }
       );
-      if (res.ok) {
-        const data: Commit[] = await res.json();
-        setCommits(data);
+
+      if (!res.ok) {
+        let errText = `Failed to sync commits for branch "${cleanBranch}"`;
+        try {
+          const errJson = await res.json();
+          errText = errJson.message || errJson.error || errText;
+        } catch {
+          errText = await res.text();
+        }
+        throw new Error(errText);
       }
+
+      const data: Commit[] = await res.json();
+      setCommits(data);
       loadBranchData(selectedRepo.id, cleanBranch);
-    } catch (err) {
-      console.error(err);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setErrorMsg(err.message);
+      }
     } finally {
       setLoadingCommits(false);
     }
@@ -264,6 +343,24 @@ export default function App() {
     handleSwitchAndAnalyzeBranch(branch);
     setCustomBranchInput("");
     setShowCustomBranch(false);
+  };
+
+  const handleSaveToken = () => {
+    const trimmed = tokenInput.trim();
+    setGithubToken(trimmed);
+    localStorage.setItem("codesure_github_token", trimmed);
+    setShowTokenModal(false);
+    setErrorMsg(null);
+    if (selectedRepo) {
+      fetchBranches(selectedRepo);
+    }
+  };
+
+  const handleClearToken = () => {
+    setGithubToken("");
+    localStorage.removeItem("codesure_github_token");
+    setTokenInput("");
+    setShowTokenModal(false);
   };
 
   const getSeverityBadgeClass = (severity: string) => {
@@ -298,15 +395,70 @@ export default function App() {
           <span className={`pill ${backendStatus === "Connected" ? "online" : "offline"}`}>
             Backend: {backendStatus}
           </span>
-          <span className="pill online">Database: PostgreSQL</span>
+          <button
+            type="button"
+            className={`pill token-pill ${githubToken ? "online" : "warning-pill"}`}
+            onClick={() => {
+              setTokenInput(githubToken);
+              setShowTokenModal(true);
+            }}
+          >
+            🔑 GitHub Token: {githubToken ? "Active (5,000/hr)" : "Unset (60/hr Limit)"}
+          </button>
           <span className="pill badge-pill">Multi-Branch Vulnerability Analysis</span>
         </div>
       </header>
 
+      {/* GitHub Token Modal */}
+      {showTokenModal && (
+        <div className="modal-backdrop" onClick={() => setShowTokenModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>🔑 GitHub Personal Access Token</h3>
+            <p>
+              GitHub strictly caps unauthenticated API calls to <strong>60 requests per hour</strong>.
+              Adding a free Personal Access Token unlocks <strong>5,000 requests per hour</strong>, ensuring
+              branch discovery, commit history, and deep diff inspection work smoothly.
+            </p>
+            <div className="token-instructions">
+              <span>Generate a token at: </span>
+              <a
+                href="https://github.com/settings/tokens/new?description=CodeSure&scopes=public_repo"
+                target="_blank"
+                rel="noreferrer"
+                className="link"
+              >
+                github.com/settings/tokens (no extra scopes needed for public repos) ↗
+              </a>
+            </div>
+            <input
+              type="password"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+              className="token-input"
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button onClick={handleSaveToken} className="btn-primary">
+                Save Token
+              </button>
+              {githubToken && (
+                <button onClick={handleClearToken} className="btn-secondary">
+                  Remove Token
+                </button>
+              )}
+              <button onClick={() => setShowTokenModal(false)} className="btn-outline-small">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="codesure-layout">
         {/* Sidebar */}
         <aside className="codesure-sidebar">
-          <h3>Connected Repositories</h3>
+          <h3>Connected Repositories ({repositories.length})</h3>
           <form onSubmit={handleRegisterRepo} className="repo-form">
             <input
               type="text"
@@ -320,7 +472,20 @@ export default function App() {
             </button>
           </form>
 
-          {errorMsg && <div className="error-alert">{errorMsg}</div>}
+          {errorMsg && (
+            <div className="error-alert">
+              <span>{errorMsg}</span>
+              {!githubToken && (
+                <button
+                  type="button"
+                  className="btn-token-quick"
+                  onClick={() => setShowTokenModal(true)}
+                >
+                  Add GitHub Token (Fix 403 Rate Limit)
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="repo-list">
             {repositories.length === 0 ? (
@@ -332,7 +497,19 @@ export default function App() {
                   className={`repo-card ${selectedRepo?.id === repo.id ? "active" : ""}`}
                   onClick={() => selectRepository(repo)}
                 >
-                  <h4>{repo.name}</h4>
+                  <div className="repo-card-top">
+                    <h4>{repo.name}</h4>
+                    <button
+                      className="btn-delete-repo"
+                      title="Delete Repository"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteRepo(repo.id, repo.name);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                   <p className="repo-url">{repo.repositoryUrl}</p>
                   <span className="tag">Default: {repo.defaultBranch}</span>
                 </div>
@@ -362,6 +539,13 @@ export default function App() {
                       className="btn-secondary"
                     >
                       {loadingCommits ? "Analyzing Branch..." : `↻ Re-Analyze ${selectedBranch}`}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteRepo(selectedRepo.id, selectedRepo.name)}
+                      className="btn-danger-outline"
+                      title="Delete this repository"
+                    >
+                      🗑 Delete
                     </button>
                   </div>
                 </div>
