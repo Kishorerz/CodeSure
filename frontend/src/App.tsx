@@ -271,7 +271,20 @@ export default function App() {
       });
 
       if (!res.ok) {
-        throw new Error("Failed to delete repository");
+        let detail = `HTTP ${res.status}`;
+        try {
+          const errJson = await res.json();
+          detail = errJson.message || errJson.error || detail;
+        } catch {
+          const text = await res.text();
+          if (text) detail = text;
+        }
+        if (res.status === 404) {
+          throw new Error(
+            `Failed to delete repository (HTTP 404). If your backend is deployed on Render, update the Render branch to 'feature/deep-change-analysis'.`
+          );
+        }
+        throw new Error(`Failed to delete repository: ${detail}`);
       }
 
       const updated = repositories.filter((r) => r.id !== repoId);
