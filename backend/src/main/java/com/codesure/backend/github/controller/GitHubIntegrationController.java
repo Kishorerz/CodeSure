@@ -44,17 +44,26 @@ public class GitHubIntegrationController {
         return gitHubService.syncRepositoryFromUrl(url.trim());
     }
 
+    @GetMapping("/{id}/branches")
+    public List<String> getBranches(@PathVariable UUID id) {
+        return gitHubService.getBranches(id);
+    }
+
     @PostMapping("/{id}/sync-commits")
     public List<Commit> syncCommits(
             @PathVariable UUID id,
-            @RequestParam(defaultValue = "15") int limit
+            @RequestParam(required = false) String branch,
+            @RequestParam(defaultValue = "30") int limit
     ) {
-        return gitHubService.syncCommits(id, limit);
+        return gitHubService.syncCommits(id, branch, limit);
     }
 
     @GetMapping("/{id}/commits")
-    public List<Commit> getCommits(@PathVariable UUID id) {
-        return gitHubService.getRepositoryCommits(id);
+    public List<Commit> getCommits(
+            @PathVariable UUID id,
+            @RequestParam(required = false) String branch
+    ) {
+        return gitHubService.getRepositoryCommits(id, branch);
     }
 
     @PostMapping("/{id}/sync-pulls")
@@ -72,12 +81,25 @@ public class GitHubIntegrationController {
     }
 
     @GetMapping("/{id}/findings")
-    public List<Finding> getFindings(@PathVariable UUID id) {
+    public List<Finding> getFindings(
+            @PathVariable UUID id,
+            @RequestParam(required = false) String branch
+    ) {
+        if (branch != null && !branch.trim().isEmpty()) {
+            List<Commit> branchCommits = gitHubService.getRepositoryCommits(id, branch);
+            if (!branchCommits.isEmpty()) {
+                List<UUID> commitIds = branchCommits.stream().map(Commit::getId).toList();
+                return findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+            }
+        }
         return findingJpaRepository.findByCodeChangeCommitRepositoryId(id);
     }
 
     @GetMapping("/{id}/risk-assessment")
-    public RiskAssessmentResponse getRiskAssessment(@PathVariable UUID id) {
-        return riskEngineService.calculateRepositoryRisk(id);
+    public RiskAssessmentResponse getRiskAssessment(
+            @PathVariable UUID id,
+            @RequestParam(required = false) String branch
+    ) {
+        return riskEngineService.calculateRepositoryRisk(id, branch);
     }
 }

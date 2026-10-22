@@ -45,6 +45,7 @@ interface PrioritizedFinding {
 interface RiskAssessment {
   repositoryId: string;
   repositoryName: string;
+  branchName?: string;
   overallRiskScore: number;
   riskLevel: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   totalFilesChanged: number;
@@ -71,6 +72,11 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [loadingCommits, setLoadingCommits] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Branch switching state
+  const [branches, setBranches] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string>("main");
+  const [loadingBranches, setLoadingBranches] = useState<boolean>(false);
 
   const [commits, setCommits] = useState<Commit[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -121,27 +127,61 @@ export default function App() {
     loadRepositories();
   }, [backendStatus]);
 
-  const selectRepository = (repo: Repository) => {
-    setSelectedRepo(repo);
-    setErrorMsg(null);
+  const loadBranchData = (repoId: string, branchName: string) => {
+    const encodedBranch = encodeURIComponent(branchName);
 
-    // Fetch existing synced commits
-    fetch(`${API_BASE}/api/repositories/${repo.id}/commits`)
+    // Fetch branch commits
+    fetch(`${API_BASE}/api/repositories/${repoId}/commits?branch=${encodedBranch}`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setCommits(data))
       .catch(() => setCommits([]));
 
-    // Fetch findings
-    fetch(`${API_BASE}/api/repositories/${repo.id}/findings`)
+    // Fetch branch findings
+    fetch(`${API_BASE}/api/repositories/${repoId}/findings?branch=${encodedBranch}`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setFindings(data))
       .catch(() => setFindings([]));
 
-    // Fetch risk assessment (contains prioritizedFindings)
-    fetch(`${API_BASE}/api/repositories/${repo.id}/risk-assessment`)
+    // Fetch branch risk assessment
+    fetch(`${API_BASE}/api/repositories/${repoId}/risk-assessment?branch=${encodedBranch}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setRiskAssessment(data))
       .catch(() => setRiskAssessment(null));
+  };
+
+  const selectRepository = async (repo: Repository, branchToSelect?: string) => {
+    setSelectedRepo(repo);
+    setErrorMsg(null);
+
+    const initialBranch = branchToSelect || repo.defaultBranch || "main";
+    setSelectedBranch(initialBranch);
+
+    // Fetch available branches for this repo
+    setLoadingBranches(true);
+    let effectiveBranch = initialBranch;
+    try {
+      const res = await fetch(`${API_BASE}/api/repositories/${repo.id}/branches`);
+      if (res.ok) {
+        const branchList: string[] = await res.json();
+        if (branchList && branchList.length > 0) {
+          setBranches(branchList);
+          if (!branchList.includes(initialBranch)) {
+            effectiveBranch = branchList[0];
+            setSelectedBranch(effectiveBranch);
+          }
+        } else {
+          setBranches([initialBranch]);
+        }
+      } else {
+        setBranches([initialBranch]);
+      }
+    } catch {
+      setBranches([initialBranch]);
+    } finally {
+      setLoadingBranches(false);
+    }
+
+    loadBranchData(repo.id, effectiveBranch);
   };
 
   const handleRegisterRepo = async (e: React.FormEvent) => {
@@ -183,19 +223,20 @@ export default function App() {
     }
   };
 
-  const handleSyncCommits = async (limit = 30) => {
+  const handleSwitchAndAnalyzeBranch = async (targetBranch: string) => {
     if (!selectedRepo) return;
+    setSelectedBranch(targetBranch);
     setLoadingCommits(true);
     try {
-      const res = await fetch(`${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?limit=${limit}`, {
-        method: "POST",
-      });
+      const res = await fetch(
+        `${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?branch=${encodeURIComponent(targetBranch)}&limit=30`,
+        { method: "POST" }
+      );
       if (res.ok) {
         const data: Commit[] = await res.json();
         setCommits(data);
-        // Refresh risk assessment & findings after analyzing code
-        selectRepository(selectedRepo);
       }
+      loadBranchData(selectedRepo.id, targetBranch);
     } catch (err) {
       console.error(err);
     } finally {
@@ -236,7 +277,7 @@ export default function App() {
             Backend: {backendStatus}
           </span>
           <span className="pill online">Database: PostgreSQL</span>
-          <span className="pill badge-pill">Deep Commit Diff Analysis</span>
+          <span className="pill badge-pill">Multi-Branch Vulnerability Analysis</span>
         </div>
       </header>
 
@@ -271,7 +312,7 @@ export default function App() {
                 >
                   <h4>{repo.name}</h4>
                   <p className="repo-url">{repo.repositoryUrl}</p>
-                  <span className="tag">Branch: {repo.defaultBranch}</span>
+                  <span className="tag">Default: {repo.defaultBranch}</span>
                 </div>
               ))
             )}
@@ -282,19 +323,60 @@ export default function App() {
         <main className="codesure-main">
           {selectedRepo ? (
             <>
-              {/* Header Actions */}
-              <div className="repo-header-actions">
-                <div>
-                  <h2>{selectedRepo.name}</h2>
-                  <a href={selectedRepo.repositoryUrl} target="_blank" rel="noreferrer" className="link">
-                    {selectedRepo.repositoryUrl}
-                  </a>
+              {/* Header Actions & Branch Switcher Bar */}
+              <div className="repo-header-container">
+                <div className="repo-header-main">
+                  <div>
+                    <h2>{selectedRepo.name}</h2>
+                    <a href={selectedRepo.repositoryUrl} target="_blank" rel="noreferrer" className="link">
+                      {selectedRepo.repositoryUrl}
+                    </a>
+                  </div>
+                  <div className="action-buttons">
+                    <span className="pill online">{commits.length} Commits Analyzed</span>
+                    <button
+                      onClick={() => handleSwitchAndAnalyzeBranch(selectedBranch)}
+                      disabled={loadingCommits}
+                      className="btn-secondary"
+                    >
+                      {loadingCommits ? "Analyzing Branch..." : `↻ Re-Analyze ${selectedBranch}`}
+                    </button>
+                  </div>
                 </div>
-                <div className="action-buttons">
-                  <span className="pill online">{commits.length} Ingested Commits</span>
-                  <button onClick={() => handleSyncCommits(30)} disabled={loadingCommits} className="btn-secondary">
-                    {loadingCommits ? "Syncing Commits..." : "Pull All Commits & Re-Analyze"}
-                  </button>
+
+                {/* Branch Switcher Controls */}
+                <div className="branch-switcher-bar">
+                  <div className="branch-selector-group">
+                    <span className="branch-icon">🌿</span>
+                    <label htmlFor="branch-select" className="branch-label">Switch Branch:</label>
+                    <select
+                      id="branch-select"
+                      className="branch-select"
+                      value={selectedBranch}
+                      disabled={loadingBranches || loadingCommits}
+                      onChange={(e) => handleSwitchAndAnalyzeBranch(e.target.value)}
+                    >
+                      {branches.map((b) => (
+                        <option key={b} value={b}>
+                          {b} {b === selectedRepo.defaultBranch ? "(default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn-switch-branch"
+                      disabled={loadingCommits}
+                      onClick={() => handleSwitchAndAnalyzeBranch(selectedBranch)}
+                    >
+                      {loadingCommits ? "Analyzing..." : "Switch & Analyze Branch"}
+                    </button>
+                  </div>
+                  <div className="branch-info-banner">
+                    <span className="branch-badge">Active: {selectedBranch}</span>
+                    <span className="branch-hint">
+                      Analyzing development stage changes on <strong>{selectedBranch}</strong> before merging into main.
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -302,11 +384,12 @@ export default function App() {
               {riskAssessment && (
                 <section className="risk-overview-card">
                   <div className="risk-score-box">
-                    <span className="risk-title">OVERALL CHANGE RISK</span>
+                    <span className="risk-title">BRANCH RISK SCORE</span>
                     <div className="score-value">{riskAssessment.overallRiskScore}</div>
                     <span className={`risk-level-tag ${riskAssessment.riskLevel.toLowerCase()}`}>
                       {riskAssessment.riskLevel}
                     </span>
+                    <span className="branch-subtag">{riskAssessment.branchName || selectedBranch}</span>
                   </div>
 
                   <div className="risk-metrics-grid">
@@ -321,11 +404,11 @@ export default function App() {
                       </span>
                     </div>
                     <div className="metric-item">
-                      <span className="metric-label">Files Evaluated in Commits</span>
+                      <span className="metric-label">Files Evaluated in Branch</span>
                       <span className="metric-val">{riskAssessment.totalFilesChanged}</span>
                     </div>
                     <div className="metric-item">
-                      <span className="metric-label">Commit Line Churn</span>
+                      <span className="metric-label">Branch Line Churn</span>
                       <span className="metric-val">
                         +{riskAssessment.totalAdditions} / -{riskAssessment.totalDeletions}
                       </span>
@@ -337,7 +420,7 @@ export default function App() {
               {/* AI Explanation based on Evidence */}
               {riskAssessment && riskAssessment.aiExplanation && (
                 <section className="explanation-section">
-                  <h3>Developer Risk Advisory & Impact Summary</h3>
+                  <h3>Developer Risk Advisory & Impact Summary ({selectedBranch})</h3>
                   <div className="explanation-content">
                     <pre>{riskAssessment.aiExplanation}</pre>
                   </div>
@@ -356,13 +439,13 @@ export default function App() {
                   className={`tab-btn ${activeTab === "commits" ? "active" : ""}`}
                   onClick={() => setActiveTab("commits")}
                 >
-                  Commit History ({commits.length})
+                  Branch Commit History ({commits.length})
                 </button>
                 <button
                   className={`tab-btn ${activeTab === "allFindings" ? "active" : ""}`}
                   onClick={() => setActiveTab("allFindings")}
                 >
-                  All Raw Findings ({findings.length})
+                  Raw Findings ({findings.length})
                 </button>
               </div>
 
@@ -370,13 +453,16 @@ export default function App() {
               {activeTab === "priorities" && (
                 <section className="prioritized-section">
                   <div className="section-intro">
-                    <h3>Developer Action Plan: Prioritized by Risk Criticality</h3>
-                    <p>Review the errors detected in commits, understand why they happened, and follow the remediation guide to fix the most dangerous flaws first.</p>
+                    <h3>Developer Action Plan: Prioritized by Risk Criticality (Branch: {selectedBranch})</h3>
+                    <p>
+                      Review errors introduced in development stages on branch <strong>{selectedBranch}</strong>.
+                      Understand why they happened, and fix high-criticality vulnerabilities first to ensure a clean merge.
+                    </p>
                   </div>
 
                   {prioritizedList.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>No critical risks detected in recent commits. Code quality and security checks passed!</p>
+                      <p>No critical risks detected in branch '{selectedBranch}'. Code checks passed!</p>
                     </div>
                   ) : (
                     <div className="prioritized-list">
@@ -432,7 +518,7 @@ export default function App() {
                           {/* Commit Context Footer */}
                           {(item.commitSha || item.commitMessage) && (
                             <div className="commit-source-footer">
-                              <span className="footer-label">Detected in Commit:</span>
+                              <span className="footer-label">Detected in Branch '{selectedBranch}' Commit:</span>
                               {item.commitSha && (
                                 <a
                                   href={`${selectedRepo.repositoryUrl}/commit/${item.commitSha}`}
@@ -455,17 +541,17 @@ export default function App() {
                 </section>
               )}
 
-              {/* TAB 2: COMMIT HISTORY */}
+              {/* TAB 2: BRANCH COMMIT HISTORY */}
               {activeTab === "commits" && (
                 <section className="commits-history-section">
                   <div className="section-intro">
-                    <h3>Ingested Commit History</h3>
-                    <p>Entire commit trail ingested from GitHub. Each commit is deeply inspected for modified files, unified diffs, and static risks.</p>
+                    <h3>Commit History on Branch: {selectedBranch}</h3>
+                    <p>Commits ingested for branch '{selectedBranch}'. Each commit's unified diff is inspected for code vulnerabilities.</p>
                   </div>
 
                   {commits.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>No commits ingested yet. Click "Pull All Commits & Re-Analyze" above to fetch history.</p>
+                      <p>No commits ingested yet for branch '{selectedBranch}'. Click "Switch & Analyze Branch" above.</p>
                     </div>
                   ) : (
                     <div className="commits-table-wrap">
@@ -520,12 +606,12 @@ export default function App() {
               {activeTab === "allFindings" && (
                 <section className="findings-section">
                   <div className="section-intro">
-                    <h3>All Static Evidence & Findings ({findings.length})</h3>
-                    <p>Raw findings detected across changesets and analyzed commits.</p>
+                    <h3>Static Evidence & Findings on '{selectedBranch}' ({findings.length})</h3>
+                    <p>Raw findings detected across changesets and analyzed commits on this branch.</p>
                   </div>
                   {findings.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>No active static security or quality findings in this change set.</p>
+                      <p>No active static security or quality findings in branch '{selectedBranch}'.</p>
                     </div>
                   ) : (
                     <div className="findings-table-wrap">
@@ -561,7 +647,7 @@ export default function App() {
           ) : (
             <div className="placeholder-view">
               <h2>Welcome to CodeSure / DevSentinel</h2>
-              <p>Connect a GitHub repository to monitor code changes, extract static evidence, analyze full commit history, and prioritize developer remediation.</p>
+              <p>Connect a GitHub repository to switch between branches, analyze developing changes, and prioritize remediation for developers.</p>
             </div>
           )}
         </main>

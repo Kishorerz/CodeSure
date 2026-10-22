@@ -1,5 +1,6 @@
 package com.codesure.backend.github.client;
 
+import com.codesure.backend.github.dto.GitHubBranchResponse;
 import com.codesure.backend.github.dto.GitHubCommitResponse;
 import com.codesure.backend.github.dto.GitHubCompareResponse;
 import com.codesure.backend.github.dto.GitHubPullRequestResponse;
@@ -49,12 +50,32 @@ public class GitHubClient {
         return response.getBody();
     }
 
+    public List<GitHubBranchResponse> getBranches(String owner, String repo) {
+        String url = String.format("https://api.github.com/repos/%s/%s/branches?per_page=100", owner, repo);
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<List<GitHubBranchResponse>> response = restTemplate.exchange(
+                url, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {}
+        );
+        return response.getBody() != null ? response.getBody() : new ArrayList<>();
+    }
+
     public List<GitHubCommitResponse> getCommits(String owner, String repo, int perPage) {
-        return getCommits(owner, repo, 1, perPage);
+        return getCommits(owner, repo, null, 1, perPage);
     }
 
     public List<GitHubCommitResponse> getCommits(String owner, String repo, int page, int perPage) {
-        String url = String.format("https://api.github.com/repos/%s/%s/commits?page=%d&per_page=%d", owner, repo, page, perPage);
+        return getCommits(owner, repo, null, page, perPage);
+    }
+
+    public List<GitHubCommitResponse> getCommits(String owner, String repo, String branch, int page, int perPage) {
+        String url;
+        if (branch != null && !branch.trim().isEmpty()) {
+            url = String.format("https://api.github.com/repos/%s/%s/commits?sha=%s&page=%d&per_page=%d",
+                    owner, repo, branch.trim(), page, perPage);
+        } else {
+            url = String.format("https://api.github.com/repos/%s/%s/commits?page=%d&per_page=%d",
+                    owner, repo, page, perPage);
+        }
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
         ResponseEntity<List<GitHubCommitResponse>> response = restTemplate.exchange(
                 url, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {}
@@ -63,13 +84,17 @@ public class GitHubClient {
     }
 
     public List<GitHubCommitResponse> getAllCommitsUpTo(String owner, String repo, int maxCommits) {
+        return getAllCommitsUpTo(owner, repo, null, maxCommits);
+    }
+
+    public List<GitHubCommitResponse> getAllCommitsUpTo(String owner, String repo, String branch, int maxCommits) {
         List<GitHubCommitResponse> all = new ArrayList<>();
         int page = 1;
         int perPage = Math.min(100, Math.max(10, maxCommits));
         
         while (all.size() < maxCommits) {
             try {
-                List<GitHubCommitResponse> batch = getCommits(owner, repo, page, perPage);
+                List<GitHubCommitResponse> batch = getCommits(owner, repo, branch, page, perPage);
                 if (batch == null || batch.isEmpty()) {
                     break;
                 }

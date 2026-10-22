@@ -38,11 +38,33 @@ public class RiskEngineService {
     }
 
     public RiskAssessmentResponse calculateRepositoryRisk(UUID repositoryId) {
+        return calculateRepositoryRisk(repositoryId, null);
+    }
+
+    public RiskAssessmentResponse calculateRepositoryRisk(UUID repositoryId, String branch) {
         Repository repository = repositoryJpaRepository.findById(repositoryId)
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found: " + repositoryId));
 
-        List<Commit> commits = commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
-        List<Finding> allFindings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);
+        List<Commit> commits;
+        List<Finding> allFindings;
+        String effectiveBranch = (branch != null && !branch.trim().isEmpty())
+                ? branch.trim()
+                : (repository.getDefaultBranch() != null ? repository.getDefaultBranch() : "main");
+
+        if (branch != null && !branch.trim().isEmpty()) {
+            List<Commit> branchCommits = commitJpaRepository.findByRepositoryIdAndBranch(repositoryId, branch.trim());
+            if (!branchCommits.isEmpty()) {
+                commits = branchCommits;
+                List<UUID> commitIds = commits.stream().map(Commit::getId).toList();
+                allFindings = findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+            } else {
+                commits = commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+                allFindings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);
+            }
+        } else {
+            commits = commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+            allFindings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);
+        }
 
         int critical = 0;
         int high = 0;
@@ -92,19 +114,19 @@ public class RiskEngineService {
 
         List<String> factors = new ArrayList<>();
         if (critical > 0) {
-            factors.add(String.format("%d critical security vulnerabilities detected.", critical));
+            factors.add(String.format("%d critical security vulnerabilities detected on branch '%s'.", critical, effectiveBranch));
         }
         if (high > 0) {
-            factors.add(String.format("%d high-severity static analysis issues found.", high));
+            factors.add(String.format("%d high-severity static analysis issues found on branch '%s'.", high, effectiveBranch));
         }
         if (totalAdditions + totalDeletions > 200) {
-            factors.add(String.format("High code churn detected (+%d / -%d lines across %d files).", totalAdditions, totalDeletions, totalFilesChanged));
+            factors.add(String.format("High code churn on branch '%s' (+%d / -%d lines across %d files).", effectiveBranch, totalAdditions, totalDeletions, totalFilesChanged));
         }
         if (commits.size() > 5) {
-            factors.add(String.format("Active commit velocity (%d commits analyzed).", commits.size()));
+            factors.add(String.format("Active commit velocity on branch '%s' (%d commits analyzed).", effectiveBranch, commits.size()));
         }
         if (factors.isEmpty()) {
-            factors.add("Standard development churn within safe operating thresholds.");
+            factors.add(String.format("Standard development churn within safe operating thresholds on branch '%s'.", effectiveBranch));
         }
 
         // Sort findings by priority rank
@@ -148,7 +170,8 @@ public class RiskEngineService {
 
         // Evidence-Based Explanation (Rule 11: Explain WHY based on evidence)
         StringBuilder explanation = new StringBuilder();
-        explanation.append("DevSentinel analyzed ").append(repository.getName())
+        explanation.append("DevSentinel analyzed branch '").append(effectiveBranch).append("' of ")
+                .append(repository.getName())
                 .append(" with an evidence-backed score of ").append(String.format("%.1f", finalScore))
                 .append("/100 (Risk Level: ").append(level).append(").\n\n");
         explanation.append("Key Evidence Observed:\n");
@@ -157,7 +180,7 @@ public class RiskEngineService {
         }
 
         if (!prioritizedList.isEmpty()) {
-            explanation.append("\nTop Priority Action Items for Developer:\n");
+            explanation.append("\nTop Priority Action Items for Developer (Fix on '").append(effectiveBranch).append("' before merge):\n");
             int previewCount = Math.min(3, prioritizedList.size());
             for (int i = 0; i < previewCount; i++) {
                 PrioritizedFindingDto item = prioritizedList.get(i);
@@ -169,18 +192,19 @@ public class RiskEngineService {
 
         explanation.append("\nRecommended Developer Action: ");
         if ("CRITICAL".equals(level)) {
-            explanation.append("Immediate triage required. Block PR/merge until critical findings (e.g. hardcoded credentials or critical flaws) are remediated.");
+            explanation.append("Immediate triage required on '").append(effectiveBranch).append("'. Block merge into main until critical findings are remediated.");
         } else if ("HIGH".equals(level)) {
-            explanation.append("Review high-severity security findings before deployment to production environments.");
+            explanation.append("Review high-severity security findings on '").append(effectiveBranch).append("' before approving PR or deploying.");
         } else if ("MEDIUM".equals(level)) {
-            explanation.append("Ensure adequate unit test coverage for changed modules and review flagged code smells.");
+            explanation.append("Ensure adequate unit test coverage for changed modules and review flagged code smells on '").append(effectiveBranch).append("'.");
         } else {
-            explanation.append("Low change risk detected. Standard peer review is sufficient.");
+            explanation.append("Low change risk detected on '").append(effectiveBranch).append("'. Safe to proceed with standard code review.");
         }
 
         return RiskAssessmentResponse.builder()
                 .repositoryId(repositoryId)
                 .repositoryName(repository.getName())
+                .branchName(effectiveBranch)
                 .overallRiskScore(Math.round(finalScore * 10.0) / 10.0)
                 .riskLevel(level)
                 .totalFilesChanged(totalFilesChanged)

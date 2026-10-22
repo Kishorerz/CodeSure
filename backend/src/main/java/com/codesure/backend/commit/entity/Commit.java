@@ -4,6 +4,8 @@ import com.codesure.backend.repository.entity.Repository;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -40,6 +42,11 @@ public class Commit {
 
     @Column(name = "committed_at", nullable = false)
     private LocalDateTime committedAt;
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "commit_branches", joinColumns = @JoinColumn(name = "commit_id"))
+    @Column(name = "branch_name")
+    private Set<String> branches = new HashSet<>();
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -90,6 +97,13 @@ public class Commit {
         return committedAt;
     }
 
+    public Set<String> getBranches() {
+        if (branches == null) {
+            branches = new HashSet<>();
+        }
+        return branches;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -120,5 +134,9 @@ public class Commit {
 
     public void setCommittedAt(LocalDateTime committedAt) {
         this.committedAt = committedAt;
+    }
+
+    public void setBranches(Set<String> branches) {
+        this.branches = branches;
     }
 }

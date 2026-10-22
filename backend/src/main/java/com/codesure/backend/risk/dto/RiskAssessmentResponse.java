@@ -10,6 +10,7 @@ import java.util.UUID;
 public class RiskAssessmentResponse {
     private UUID repositoryId;
     private String repositoryName;
+    private String branchName;
     private double overallRiskScore;
     private String riskLevel; // CRITICAL, HIGH, MEDIUM, LOW
     private int totalFilesChanged;

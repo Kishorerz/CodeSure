@@ -3,6 +3,8 @@ package com.codesure.backend.finding.repository;
 import com.codesure.backend.finding.entity.Finding;
 import com.codesure.backend.finding.entity.Severity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -16,4 +18,7 @@ public interface FindingJpaRepository extends JpaRepository<Finding, UUID> {
     List<Finding> findByCodeChangeCommitRepositoryId(UUID repositoryId);
     List<Finding> findByCodeChangeCommitRepositoryIdOrderByPriorityRankAsc(UUID repositoryId);
     long countByCodeChangeCommitRepositoryIdAndSeverity(UUID repositoryId, Severity severity);
+
+    @Query("SELECT DISTINCT f FROM Finding f WHERE f.codeChange.commit.id IN :commitIds ORDER BY f.priorityRank ASC")
+    List<Finding> findByCommitIdsOrderByPriorityRankAsc(@Param("commitIds") List<UUID> commitIds);
 }

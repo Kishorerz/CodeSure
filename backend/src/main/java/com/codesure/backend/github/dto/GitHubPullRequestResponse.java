@@ -25,6 +25,9 @@ public class GitHubPullRequestResponse {
     @JsonProperty("updated_at")
     private String updatedAt;
 
+    @JsonProperty("merged_at")
+    private String mergedAt;
+
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class GitHubUser {

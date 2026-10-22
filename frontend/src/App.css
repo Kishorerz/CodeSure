@@ -199,15 +199,22 @@ body {
   overflow-y: auto;
 }
 
-.repo-header-actions {
+/* Repo Header & Branch Switcher Bar */
+.repo-header-container {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 0.85rem;
   border-bottom: 1px solid var(--border);
   padding-bottom: 1rem;
 }
 
-.repo-header-actions h2 {
+.repo-header-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.repo-header-main h2 {
   margin: 0 0 0.25rem 0;
   font-size: 1.5rem;
 }
@@ -247,6 +254,103 @@ body {
 .btn-secondary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Branch Switcher Bar */
+.branch-switcher-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.branch-selector-group {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.branch-icon {
+  font-size: 1.1rem;
+}
+
+.branch-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.branch-select {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--accent);
+  color: #93c5fd;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  min-width: 180px;
+}
+
+.branch-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-switch-branch {
+  background-color: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-switch-branch:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-switch-branch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.branch-info-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.branch-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  background-color: rgba(59, 130, 246, 0.15);
+  border: 1px solid #3b82f6;
+  color: #93c5fd;
+  font-family: monospace;
+}
+
+.branch-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.branch-subtag {
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: #93c5fd;
+  margin-top: 0.35rem;
 }
 
 /* Risk Overview Card */

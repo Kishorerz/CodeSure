@@ -98,7 +98,7 @@ public class GitHubService {
 
         // Auto-sync commit history and analyze changes on registration
         try {
-            syncCommits(saved.getId(), 30);
+            syncCommits(saved.getId(), defaultBranch, 30);
         } catch (Exception e) {
             System.err.println("Notice: Auto-syncing initial commits completed with warning: " + e.getMessage());
         }
@@ -106,24 +106,57 @@ public class GitHubService {
         return saved;
     }
 
-    @Transactional
-    public List<Commit> syncCommits(UUID repositoryId, int limit) {
+    @Transactional(readOnly = true)
+    public List<String> getBranches(UUID repositoryId) {
         Repository repository = repositoryJpaRepository.findById(repositoryId)
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
+
+        String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
+        List<String> branchNames = new ArrayList<>();
+        try {
+            List<GitHubBranchResponse> ghBranches = gitHubClient.getBranches(parts[0], parts[1]);
+            if (ghBranches != null && !ghBranches.isEmpty()) {
+                for (GitHubBranchResponse b : ghBranches) {
+                    if (b.getName() != null && !b.getName().trim().isEmpty()) {
+                        branchNames.add(b.getName().trim());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Notice: Could not list branches from GitHub (" + e.getMessage() + "), using fallback.");
+        }
+
+        String def = repository.getDefaultBranch() != null ? repository.getDefaultBranch() : "main";
+        if (!branchNames.contains(def)) {
+            branchNames.add(0, def);
+        }
+        return branchNames;
+    }
+
+    @Transactional
+    public List<Commit> syncCommits(UUID repositoryId, String branch, int limit) {
+        Repository repository = repositoryJpaRepository.findById(repositoryId)
+                .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
+
+        String targetBranch = (branch != null && !branch.trim().isEmpty())
+                ? branch.trim()
+                : (repository.getDefaultBranch() != null ? repository.getDefaultBranch() : "main");
 
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
         List<GitHubCommitResponse> ghCommits = null;
         try {
             int max = limit > 0 ? limit : 30;
-            ghCommits = gitHubClient.getAllCommitsUpTo(parts[0], parts[1], max);
+            ghCommits = gitHubClient.getAllCommitsUpTo(parts[0], parts[1], targetBranch, max);
         } catch (Exception e) {
-            System.err.println("Notice: GitHub commit sync failed (" + e.getMessage() + "), returning existing commits.");
-            return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+            System.err.println("Notice: GitHub commit sync failed for branch " + targetBranch + " (" + e.getMessage() + "), returning existing commits.");
+            List<Commit> existing = commitJpaRepository.findByRepositoryIdAndBranch(repositoryId, targetBranch);
+            return !existing.isEmpty() ? existing : commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
         }
 
         List<Commit> savedCommits = new ArrayList<>();
         if (ghCommits == null || ghCommits.isEmpty()) {
-            return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+            List<Commit> existing = commitJpaRepository.findByRepositoryIdAndBranch(repositoryId, targetBranch);
+            return !existing.isEmpty() ? existing : commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
         }
 
         for (GitHubCommitResponse ghc : ghCommits) {
@@ -164,14 +197,20 @@ public class GitHubService {
             commit.setAuthorName(authorName);
             commit.setAuthorEmail(authorEmail);
             commit.setCommittedAt(committedAt);
+            commit.getBranches().add(targetBranch);
 
             savedCommits.add(commitJpaRepository.save(commit));
         }
 
-        // Deep diff inspection and static code analysis on the most recent commits
+        // Deep diff inspection and static code analysis on the most recent commits of this branch
         analyzeRecentCommits(parts[0], parts[1], savedCommits);
 
         return savedCommits;
+    }
+
+    @Transactional
+    public List<Commit> syncCommits(UUID repositoryId, int limit) {
+        return syncCommits(repositoryId, null, limit);
     }
 
     private void analyzeRecentCommits(String owner, String repo, List<Commit> commits) {
@@ -184,7 +223,7 @@ public class GitHubService {
                     for (GitHubCompareResponse.GitHubDiffFile file : details.getFiles()) {
                         if (file.getFilename() == null) continue;
 
-                        CodeChange codeChange = codeChangeJpaRepository.findByCommitIdAndFilePath(commit.getId(), file.getFilename())
+                        CodeChange change = codeChangeJpaRepository.findByCommitIdAndFilePath(commit.getId(), file.getFilename())
                                 .orElseGet(() -> {
                                     CodeChange cc = new CodeChange();
                                     cc.setCommit(commit);
@@ -192,10 +231,10 @@ public class GitHubService {
                                     return cc;
                                 });
 
-                        codeChange.setAdditions(file.getAdditions() != null ? file.getAdditions() : 0);
-                        codeChange.setDeletions(file.getDeletions() != null ? file.getDeletions() : 0);
-                        codeChange.setPreviousFilePath(file.getPreviousFilename());
-                        codeChange.setPatch(file.getPatch());
+                        change.setAdditions(file.getAdditions() != null ? file.getAdditions() : 0);
+                        change.setDeletions(file.getDeletions() != null ? file.getDeletions() : 0);
+                        change.setPreviousFilePath(file.getPreviousFilename());
+                        change.setPatch(file.getPatch());
 
                         ChangeType type = ChangeType.MODIFIED;
                         if ("added".equalsIgnoreCase(file.getStatus())) {
@@ -205,16 +244,14 @@ public class GitHubService {
                         } else if ("renamed".equalsIgnoreCase(file.getStatus())) {
                             type = ChangeType.RENAMED;
                         }
-                        codeChange.setChangeType(type);
+                        change.setChangeType(type);
 
-                        CodeChange savedChange = codeChangeJpaRepository.save(codeChange);
-
-                        // Trigger static analysis on the patch diff
+                        CodeChange savedChange = codeChangeJpaRepository.save(change);
                         codeAnalyzerService.analyzeCodeChange(savedChange, file.getPatch());
                     }
                 }
             } catch (Exception e) {
-                System.err.println("Notice: Skipped diff analysis for commit " + commit.getSha() + ": " + e.getMessage());
+                System.err.println("Notice: analyzing commit diff failed (" + e.getMessage() + "), skipping detailed inspection for " + commit.getSha());
             }
         }
     }
@@ -225,78 +262,59 @@ public class GitHubService {
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
 
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
-        List<GitHubPullRequestResponse> ghPrs = null;
-        try {
-            ghPrs = gitHubClient.getPullRequests(parts[0], parts[1], "all");
-        } catch (Exception e) {
-            System.err.println("Notice: GitHub PR sync failed (" + e.getMessage() + "), returning existing PRs.");
-            return pullRequestJpaRepository.findByRepositoryIdOrderByPrNumberDesc(repositoryId);
-        }
+        List<GitHubPullRequestResponse> ghPulls = gitHubClient.getPullRequests(parts[0], parts[1], "all");
 
-        List<PullRequest> savedPrs = new ArrayList<>();
-        if (ghPrs == null) return savedPrs;
-
-        for (GitHubPullRequestResponse ghPr : ghPrs) {
-            if (ghPr.getNumber() == null) continue;
-
-            PullRequest pr = pullRequestJpaRepository.findByRepositoryIdAndPrNumber(repositoryId, ghPr.getNumber())
+        List<PullRequest> savedPulls = new ArrayList<>();
+        for (GitHubPullRequestResponse ghp : ghPulls) {
+            PullRequest pr = pullRequestJpaRepository.findByRepositoryIdAndPrNumber(repositoryId, ghp.getNumber())
                     .orElseGet(() -> {
                         PullRequest p = new PullRequest();
                         p.setRepository(repository);
-                        p.setPrNumber(ghPr.getNumber());
+                        p.setPrNumber(ghp.getNumber());
                         return p;
                     });
 
-            pr.setTitle(ghPr.getTitle() != null ? ghPr.getTitle() : "PR #" + ghPr.getNumber());
-            pr.setAuthor(ghPr.getUser() != null ? ghPr.getUser().getLogin() : "unknown");
-            pr.setBaseBranch(ghPr.getBase() != null ? ghPr.getBase().getRef() : repository.getDefaultBranch());
-            pr.setHeadBranch(ghPr.getHead() != null ? ghPr.getHead().getRef() : "head");
+            pr.setTitle(ghp.getTitle() != null ? ghp.getTitle() : "No title");
+            pr.setHeadBranch(ghp.getHead() != null && ghp.getHead().getRef() != null ? ghp.getHead().getRef() : "unknown");
+            pr.setBaseBranch(ghp.getBase() != null && ghp.getBase().getRef() != null ? ghp.getBase().getRef() : "main");
 
-            String stateStr = ghPr.getState() != null ? ghPr.getState().toUpperCase() : "OPEN";
-            PullRequestState state;
-            try {
-                state = PullRequestState.valueOf(stateStr);
-            } catch (Exception e) {
-                state = PullRequestState.OPEN;
+            PullRequestState state = PullRequestState.OPEN;
+            if ("closed".equalsIgnoreCase(ghp.getState())) {
+                state = ghp.getMergedAt() != null ? PullRequestState.MERGED : PullRequestState.CLOSED;
             }
             pr.setState(state);
 
-            savedPrs.add(pullRequestJpaRepository.save(pr));
+            if (ghp.getUser() != null && ghp.getUser().getLogin() != null) {
+                pr.setAuthor(ghp.getUser().getLogin());
+            } else {
+                pr.setAuthor("unknown");
+            }
+
+            savedPulls.add(pullRequestJpaRepository.save(pr));
         }
 
-        return savedPrs;
+        return savedPulls;
     }
 
     @Transactional
-    public List<CodeChange> compareAndSaveDiff(UUID repositoryId, String baseSha, String targetSha) {
+    public List<CodeChange> compareAndSaveDiff(UUID repositoryId, String baseRef, String targetRef) {
         Repository repository = repositoryJpaRepository.findById(repositoryId)
                 .orElseThrow(() -> new IllegalArgumentException("Repository not found with id: " + repositoryId));
 
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
-        GitHubCompareResponse compare = null;
-        try {
-            compare = gitHubClient.compareCommits(parts[0], parts[1], baseSha, targetSha);
-        } catch (Exception e) {
-            System.err.println("Notice: GitHub commit compare failed (" + e.getMessage() + ").");
-            return List.of();
-        }
+        GitHubCompareResponse compare = gitHubClient.compareCommits(parts[0], parts[1], baseRef, targetRef);
 
         if (compare == null || compare.getFiles() == null) {
-            return List.of();
+            return new ArrayList<>();
         }
 
-        Commit targetCommit = commitJpaRepository.findByRepositoryIdAndSha(repositoryId, targetSha)
-                .orElseGet(() -> {
-                    Commit c = new Commit();
-                    c.setRepository(repository);
-                    c.setSha(targetSha);
-                    c.setMessage("Comparison target commit: " + targetSha);
-                    c.setCommittedAt(LocalDateTime.now());
-                    return commitJpaRepository.save(c);
-                });
+        List<Commit> repoCommits = commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+        if (repoCommits.isEmpty()) {
+            throw new IllegalStateException("Sync commits before comparing diffs");
+        }
+        Commit targetCommit = repoCommits.get(0);
 
         List<CodeChange> savedChanges = new ArrayList<>();
-
         for (GitHubCompareResponse.GitHubDiffFile file : compare.getFiles()) {
             if (file.getFilename() == null) continue;
 
@@ -332,7 +350,18 @@ public class GitHubService {
     }
 
     @Transactional(readOnly = true)
-    public List<Commit> getRepositoryCommits(UUID repositoryId) {
+    public List<Commit> getRepositoryCommits(UUID repositoryId, String branch) {
+        if (branch != null && !branch.trim().isEmpty()) {
+            List<Commit> branchCommits = commitJpaRepository.findByRepositoryIdAndBranch(repositoryId, branch.trim());
+            if (!branchCommits.isEmpty()) {
+                return branchCommits;
+            }
+        }
         return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Commit> getRepositoryCommits(UUID repositoryId) {
+        return getRepositoryCommits(repositoryId, null);
     }
 }
