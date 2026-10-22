@@ -878,16 +878,6 @@ export default function App() {
               <span className={`status-dot ${backendStatus === "Connected" ? "online" : "offline"}`}></span>
               <span className="status-label">Backend: {backendStatus}</span>
             </div>
-            <button
-              type="button"
-              className={`sidebar-token-btn ${githubToken ? "token-active" : "token-unset"}`}
-              onClick={() => {
-                setTokenInput(githubToken);
-                setShowTokenModal(true);
-              }}
-            >
-              🔑 {githubToken ? "Token Active (5,000/hr)" : "Set Token (60/hr Limit)"}
-            </button>
           </div>
         </div>
       </aside>
@@ -925,18 +915,10 @@ export default function App() {
                 setTokenInput(githubToken);
                 setShowTokenModal(true);
               }}
+              title="Click to manage GitHub Personal Access Token"
             >
-              🔑 {githubToken ? "5,000 req/hr" : "60 req/hr"}
+              🔑 {githubToken ? "Token: 5,000 req/hr" : "Token: Unset (60 req/hr)"}
             </button>
-
-            <div className="topbar-icon-action" title="Live System Notifications">
-              <span className="bell-icon">🔔</span>
-              <span className="notif-dot"></span>
-            </div>
-
-            <div className="topbar-user-profile" title="Developer Session">
-              <span className="user-avatar-circle">CS</span>
-            </div>
           </div>
         </header>
 
@@ -950,24 +932,17 @@ export default function App() {
                   <div>
                     <h2>{selectedRepo.name}</h2>
                     <a href={selectedRepo.repositoryUrl} target="_blank" rel="noreferrer" className="link">
-                      {selectedRepo.repositoryUrl}
+                      {selectedRepo.repositoryUrl} ↗
                     </a>
                   </div>
                   <div className="action-buttons">
-                    <span className="pill online">{commits.length} Commits Analyzed</span>
-                    <button
-                      onClick={() => handleSwitchAndAnalyzeBranch(selectedBranch)}
-                      disabled={loadingCommits}
-                      className="btn-secondary"
-                    >
-                      {loadingCommits ? "Analyzing Branch..." : `↻ Re-Analyze ${selectedBranch}`}
-                    </button>
+                    <span className="commits-analyzed-pill">{commits.length} Commits Analyzed</span>
                     <button
                       onClick={() => handleDeleteRepo(selectedRepo.id, selectedRepo.name)}
                       className="btn-danger-outline"
                       title="Delete this repository"
                     >
-                      🗑 Delete
+                      🗑 Delete Repository
                     </button>
                   </div>
                 </div>
@@ -1004,15 +979,7 @@ export default function App() {
                       disabled={loadingCommits}
                       onClick={() => handleSwitchAndAnalyzeBranch(selectedBranch)}
                     >
-                      {loadingCommits ? "Analyzing..." : "Analyze Active Branch"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="btn-outline-small"
-                      onClick={() => setShowCustomBranch(!showCustomBranch)}
-                    >
-                      {showCustomBranch ? "Cancel" : "+ Custom Branch"}
+                      {loadingCommits ? "Analyzing Branch..." : `↻ Re-Analyze ${selectedBranch}`}
                     </button>
 
                     <button
@@ -1022,7 +989,7 @@ export default function App() {
                       disabled={loadingBranches}
                       onClick={() => selectedRepo && fetchBranches(selectedRepo)}
                     >
-                      {loadingBranches ? "..." : "↻"}
+                      {loadingBranches ? "Refreshing..." : "↻ Refresh Remote Branches"}
                     </button>
                   </div>
 
@@ -1038,6 +1005,9 @@ export default function App() {
                       />
                       <button type="submit" disabled={!customBranchInput.trim() || loadingCommits} className="btn-switch-branch">
                         Switch & Analyze
+                      </button>
+                      <button type="button" onClick={() => setShowCustomBranch(false)} className="btn-outline-small">
+                        Cancel
                       </button>
                     </form>
                   )}
