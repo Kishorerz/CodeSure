@@ -27,6 +27,21 @@ interface Finding {
   analyzer: string;
 }
 
+interface PrioritizedFinding {
+  id: string;
+  priorityRank: number;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  ruleId: string;
+  message: string;
+  filePath: string;
+  lineNumber: number;
+  commitSha: string;
+  commitMessage: string;
+  rootCause: string;
+  remediation: string;
+  criticalityReason: string;
+}
+
 interface RiskAssessment {
   repositoryId: string;
   repositoryName: string;
@@ -42,6 +57,7 @@ interface RiskAssessment {
   lowFindings: number;
   keyRiskFactors: string[];
   aiExplanation: string;
+  prioritizedFindings?: PrioritizedFinding[];
 }
 
 const rawApiBase = import.meta.env.VITE_API_BASE_URL || "";
@@ -53,11 +69,13 @@ export default function App() {
   const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null);
   const [repoUrlInput, setRepoUrlInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingCommits, setLoadingCommits] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [commits, setCommits] = useState<Commit[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [riskAssessment, setRiskAssessment] = useState<RiskAssessment | null>(null);
+  const [activeTab, setActiveTab] = useState<"priorities" | "commits" | "allFindings">("priorities");
 
   // Health Check with auto-retry for Render cold starts
   useEffect(() => {
@@ -107,13 +125,19 @@ export default function App() {
     setSelectedRepo(repo);
     setErrorMsg(null);
 
+    // Fetch existing synced commits
+    fetch(`${API_BASE}/api/repositories/${repo.id}/commits`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setCommits(data))
+      .catch(() => setCommits([]));
+
     // Fetch findings
     fetch(`${API_BASE}/api/repositories/${repo.id}/findings`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setFindings(data))
       .catch(() => setFindings([]));
 
-    // Fetch risk assessment
+    // Fetch risk assessment (contains prioritizedFindings)
     fetch(`${API_BASE}/api/repositories/${repo.id}/risk-assessment`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setRiskAssessment(data))
@@ -148,11 +172,6 @@ export default function App() {
       setRepoUrlInput("");
       loadRepositories();
       selectRepository(created);
-
-      // Auto sync initial commits
-      await fetch(`${API_BASE}/api/repositories/${created.id}/sync-commits?limit=15`, {
-        method: "POST",
-      });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setErrorMsg(err.message);
@@ -164,23 +183,23 @@ export default function App() {
     }
   };
 
-  const handleSyncCommits = async () => {
+  const handleSyncCommits = async (limit = 30) => {
     if (!selectedRepo) return;
-    setLoading(true);
+    setLoadingCommits(true);
     try {
-      const res = await fetch(`${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?limit=15`, {
+      const res = await fetch(`${API_BASE}/api/repositories/${selectedRepo.id}/sync-commits?limit=${limit}`, {
         method: "POST",
       });
       if (res.ok) {
         const data: Commit[] = await res.json();
         setCommits(data);
-        // Refresh risk assessment
+        // Refresh risk assessment & findings after analyzing code
         selectRepository(selectedRepo);
       }
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      setLoadingCommits(false);
     }
   };
 
@@ -197,6 +216,15 @@ export default function App() {
     }
   };
 
+  const getPriorityBadgeClass = (rank: number) => {
+    if (rank === 1) return "priority-rank rank-1";
+    if (rank === 2) return "priority-rank rank-2";
+    if (rank <= 4) return "priority-rank rank-3";
+    return "priority-rank rank-default";
+  };
+
+  const prioritizedList = riskAssessment?.prioritizedFindings || [];
+
   return (
     <div className="codesure-app">
       <header className="codesure-header">
@@ -207,15 +235,15 @@ export default function App() {
           <span className={`pill ${backendStatus === "Connected" ? "online" : "offline"}`}>
             Backend: {backendStatus}
           </span>
-          <span className="pill online">Database: PostgreSQL Connected</span>
-          <span className="pill badge-pill">Principle: Evidence Before AI</span>
+          <span className="pill online">Database: PostgreSQL</span>
+          <span className="pill badge-pill">Deep Commit Diff Analysis</span>
         </div>
       </header>
 
       <div className="codesure-layout">
         {/* Sidebar */}
         <aside className="codesure-sidebar">
-          <h3>Registered Repositories</h3>
+          <h3>Connected Repositories</h3>
           <form onSubmit={handleRegisterRepo} className="repo-form">
             <input
               type="text"
@@ -225,7 +253,7 @@ export default function App() {
               disabled={loading}
             />
             <button type="submit" disabled={loading || !repoUrlInput.trim()}>
-              {loading ? "Syncing..." : "+ Connect Repo"}
+              {loading ? "Analyzing Repo..." : "+ Connect & Analyze Repo"}
             </button>
           </form>
 
@@ -233,7 +261,7 @@ export default function App() {
 
           <div className="repo-list">
             {repositories.length === 0 ? (
-              <p className="empty-hint">No repositories connected yet. Add one above.</p>
+              <p className="empty-hint">No repositories connected yet. Paste a GitHub repository URL above.</p>
             ) : (
               repositories.map((repo) => (
                 <div
@@ -254,6 +282,7 @@ export default function App() {
         <main className="codesure-main">
           {selectedRepo ? (
             <>
+              {/* Header Actions */}
               <div className="repo-header-actions">
                 <div>
                   <h2>{selectedRepo.name}</h2>
@@ -262,9 +291,9 @@ export default function App() {
                   </a>
                 </div>
                 <div className="action-buttons">
-                  <span className="pill online">Synced Commits: {commits.length}</span>
-                  <button onClick={handleSyncCommits} disabled={loading} className="btn-secondary">
-                    {loading ? "Syncing..." : "Sync Latest Commits"}
+                  <span className="pill online">{commits.length} Ingested Commits</span>
+                  <button onClick={() => handleSyncCommits(30)} disabled={loadingCommits} className="btn-secondary">
+                    {loadingCommits ? "Syncing Commits..." : "Pull All Commits & Re-Analyze"}
                   </button>
                 </div>
               </div>
@@ -282,21 +311,21 @@ export default function App() {
 
                   <div className="risk-metrics-grid">
                     <div className="metric-item">
-                      <span className="metric-label">Findings Count</span>
+                      <span className="metric-label">Analyzed Findings</span>
                       <span className="metric-val">{riskAssessment.totalFindings}</span>
                     </div>
                     <div className="metric-item">
-                      <span className="metric-label">Critical / High</span>
+                      <span className="metric-label">Critical / High Severity</span>
                       <span className="metric-val text-danger">
                         {riskAssessment.criticalFindings} / {riskAssessment.highFindings}
                       </span>
                     </div>
                     <div className="metric-item">
-                      <span className="metric-label">Files Evaluated</span>
+                      <span className="metric-label">Files Evaluated in Commits</span>
                       <span className="metric-val">{riskAssessment.totalFilesChanged}</span>
                     </div>
                     <div className="metric-item">
-                      <span className="metric-label">Code Churn</span>
+                      <span className="metric-label">Commit Line Churn</span>
                       <span className="metric-val">
                         +{riskAssessment.totalAdditions} / -{riskAssessment.totalDeletions}
                       </span>
@@ -306,56 +335,233 @@ export default function App() {
               )}
 
               {/* AI Explanation based on Evidence */}
-              {riskAssessment && (
+              {riskAssessment && riskAssessment.aiExplanation && (
                 <section className="explanation-section">
-                  <h3>Evidence-Based Risk Reasoning</h3>
+                  <h3>Developer Risk Advisory & Impact Summary</h3>
                   <div className="explanation-content">
                     <pre>{riskAssessment.aiExplanation}</pre>
                   </div>
                 </section>
               )}
 
-              {/* Static Analysis Findings */}
-              <section className="findings-section">
-                <h3>Detected Evidence & Findings ({findings.length})</h3>
-                {findings.length === 0 ? (
-                  <div className="no-findings">
-                    <p>No active static security or quality findings in this change set.</p>
+              {/* Navigation Tabs */}
+              <div className="content-tabs">
+                <button
+                  className={`tab-btn ${activeTab === "priorities" ? "active" : ""}`}
+                  onClick={() => setActiveTab("priorities")}
+                >
+                  Prioritized Action Items ({prioritizedList.length})
+                </button>
+                <button
+                  className={`tab-btn ${activeTab === "commits" ? "active" : ""}`}
+                  onClick={() => setActiveTab("commits")}
+                >
+                  Commit History ({commits.length})
+                </button>
+                <button
+                  className={`tab-btn ${activeTab === "allFindings" ? "active" : ""}`}
+                  onClick={() => setActiveTab("allFindings")}
+                >
+                  All Raw Findings ({findings.length})
+                </button>
+              </div>
+
+              {/* TAB 1: PRIORITIZED ACTION ITEMS */}
+              {activeTab === "priorities" && (
+                <section className="prioritized-section">
+                  <div className="section-intro">
+                    <h3>Developer Action Plan: Prioritized by Risk Criticality</h3>
+                    <p>Review the errors detected in commits, understand why they happened, and follow the remediation guide to fix the most dangerous flaws first.</p>
                   </div>
-                ) : (
-                  <div className="findings-table-wrap">
-                    <table className="findings-table">
-                      <thead>
-                        <tr>
-                          <th>Severity</th>
-                          <th>Rule ID</th>
-                          <th>Issue Message</th>
-                          <th>Line</th>
-                          <th>Analyzer</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {findings.map((f) => (
-                          <tr key={f.id}>
-                            <td>
-                              <span className={getSeverityBadgeClass(f.severity)}>{f.severity}</span>
-                            </td>
-                            <td><code>{f.ruleId}</code></td>
-                            <td>{f.message}</td>
-                            <td>Line {f.lineNumber}</td>
-                            <td>{f.analyzer}</td>
+
+                  {prioritizedList.length === 0 ? (
+                    <div className="empty-state-card">
+                      <p>No critical risks detected in recent commits. Code quality and security checks passed!</p>
+                    </div>
+                  ) : (
+                    <div className="prioritized-list">
+                      {prioritizedList.map((item) => (
+                        <div key={item.id} className={`prioritized-card severity-${item.severity.toLowerCase()}`}>
+                          <div className="prioritized-card-header">
+                            <div className="header-badges">
+                              <span className={getPriorityBadgeClass(item.priorityRank)}>
+                                Rank #{item.priorityRank} Priority
+                              </span>
+                              <span className={getSeverityBadgeClass(item.severity)}>
+                                {item.severity}
+                              </span>
+                              <span className="rule-badge">{item.ruleId}</span>
+                            </div>
+                            <div className="location-badge">
+                              {item.filePath ? (
+                                <code>{item.filePath}:{item.lineNumber > 0 ? item.lineNumber : 1}</code>
+                              ) : (
+                                <code>Global Change</code>
+                              )}
+                            </div>
+                          </div>
+
+                          <h4 className="issue-message">{item.message}</h4>
+
+                          {/* Criticality Impact */}
+                          {item.criticalityReason && (
+                            <div className="reason-banner">
+                              <strong>Why this is Critical:</strong> {item.criticalityReason}
+                            </div>
+                          )}
+
+                          {/* Dual Guidance Grid: Why it happened & How to fix */}
+                          <div className="guidance-grid">
+                            <div className="guidance-box root-cause-box">
+                              <div className="guidance-box-header">
+                                <span className="icon">⚠️</span>
+                                <strong>Why the Error Happened (Root Cause)</strong>
+                              </div>
+                              <p>{item.rootCause || "Code changes introduced an anti-pattern or security violation in the committed diff."}</p>
+                            </div>
+
+                            <div className="guidance-box remediation-box">
+                              <div className="guidance-box-header">
+                                <span className="icon">🛠️</span>
+                                <strong>How to Fix This First (Remediation)</strong>
+                              </div>
+                              <p>{item.remediation || "Refactor the flagged lines according to secure development standards."}</p>
+                            </div>
+                          </div>
+
+                          {/* Commit Context Footer */}
+                          {(item.commitSha || item.commitMessage) && (
+                            <div className="commit-source-footer">
+                              <span className="footer-label">Detected in Commit:</span>
+                              {item.commitSha && (
+                                <a
+                                  href={`${selectedRepo.repositoryUrl}/commit/${item.commitSha}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="commit-sha-link"
+                                >
+                                  {item.commitSha.substring(0, 7)}
+                                </a>
+                              )}
+                              {item.commitMessage && (
+                                <span className="commit-msg-text">"{item.commitMessage}"</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* TAB 2: COMMIT HISTORY */}
+              {activeTab === "commits" && (
+                <section className="commits-history-section">
+                  <div className="section-intro">
+                    <h3>Ingested Commit History</h3>
+                    <p>Entire commit trail ingested from GitHub. Each commit is deeply inspected for modified files, unified diffs, and static risks.</p>
+                  </div>
+
+                  {commits.length === 0 ? (
+                    <div className="empty-state-card">
+                      <p>No commits ingested yet. Click "Pull All Commits & Re-Analyze" above to fetch history.</p>
+                    </div>
+                  ) : (
+                    <div className="commits-table-wrap">
+                      <table className="commits-table">
+                        <thead>
+                          <tr>
+                            <th>Commit SHA</th>
+                            <th>Message</th>
+                            <th>Author</th>
+                            <th>Committed Date</th>
+                            <th>Action</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {commits.map((c) => (
+                            <tr key={c.id}>
+                              <td>
+                                <a
+                                  href={`${selectedRepo.repositoryUrl}/commit/${c.sha}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="commit-sha-link"
+                                >
+                                  <code>{c.sha.substring(0, 7)}</code>
+                                </a>
+                              </td>
+                              <td className="commit-message-cell">{c.message}</td>
+                              <td>{c.authorName || "Unknown"}</td>
+                              <td className="date-cell">
+                                {c.committedAt ? new Date(c.committedAt).toLocaleString() : "-"}
+                              </td>
+                              <td>
+                                <a
+                                  href={`${selectedRepo.repositoryUrl}/commit/${c.sha}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="view-btn"
+                                >
+                                  View on GitHub ↗
+                                </a>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* TAB 3: ALL RAW FINDINGS */}
+              {activeTab === "allFindings" && (
+                <section className="findings-section">
+                  <div className="section-intro">
+                    <h3>All Static Evidence & Findings ({findings.length})</h3>
+                    <p>Raw findings detected across changesets and analyzed commits.</p>
                   </div>
-                )}
-              </section>
+                  {findings.length === 0 ? (
+                    <div className="empty-state-card">
+                      <p>No active static security or quality findings in this change set.</p>
+                    </div>
+                  ) : (
+                    <div className="findings-table-wrap">
+                      <table className="findings-table">
+                        <thead>
+                          <tr>
+                            <th>Severity</th>
+                            <th>Rule ID</th>
+                            <th>Issue Message</th>
+                            <th>Line</th>
+                            <th>Analyzer</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {findings.map((f) => (
+                            <tr key={f.id}>
+                              <td>
+                                <span className={getSeverityBadgeClass(f.severity)}>{f.severity}</span>
+                              </td>
+                              <td><code>{f.ruleId}</code></td>
+                              <td>{f.message}</td>
+                              <td>Line {f.lineNumber}</td>
+                              <td>{f.analyzer}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
             </>
           ) : (
             <div className="placeholder-view">
               <h2>Welcome to CodeSure / DevSentinel</h2>
-              <p>Connect a GitHub repository to monitor code changes, extract static evidence, and predict release risk.</p>
+              <p>Connect a GitHub repository to monitor code changes, extract static evidence, analyze full commit history, and prioritize developer remediation.</p>
             </div>
           )}
         </main>

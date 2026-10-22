@@ -52,6 +52,11 @@ public class GitHubIntegrationController {
         return gitHubService.syncCommits(id, limit);
     }
 
+    @GetMapping("/{id}/commits")
+    public List<Commit> getCommits(@PathVariable UUID id) {
+        return gitHubService.getRepositoryCommits(id);
+    }
+
     @PostMapping("/{id}/sync-pulls")
     public List<PullRequest> syncPullRequests(@PathVariable UUID id) {
         return gitHubService.syncPullRequests(id);

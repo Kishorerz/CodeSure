@@ -4,6 +4,7 @@ import com.codesure.backend.github.dto.GitHubCommitResponse;
 import com.codesure.backend.github.dto.GitHubCompareResponse;
 import com.codesure.backend.github.dto.GitHubPullRequestResponse;
 import com.codesure.backend.github.dto.GitHubRepoResponse;
+import com.codesure.backend.github.dto.GitHubSingleCommitResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
@@ -11,6 +12,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -48,10 +50,47 @@ public class GitHubClient {
     }
 
     public List<GitHubCommitResponse> getCommits(String owner, String repo, int perPage) {
-        String url = String.format("https://api.github.com/repos/%s/%s/commits?per_page=%d", owner, repo, perPage);
+        return getCommits(owner, repo, 1, perPage);
+    }
+
+    public List<GitHubCommitResponse> getCommits(String owner, String repo, int page, int perPage) {
+        String url = String.format("https://api.github.com/repos/%s/%s/commits?page=%d&per_page=%d", owner, repo, page, perPage);
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
         ResponseEntity<List<GitHubCommitResponse>> response = restTemplate.exchange(
                 url, HttpMethod.GET, entity, new ParameterizedTypeReference<>() {}
+        );
+        return response.getBody();
+    }
+
+    public List<GitHubCommitResponse> getAllCommitsUpTo(String owner, String repo, int maxCommits) {
+        List<GitHubCommitResponse> all = new ArrayList<>();
+        int page = 1;
+        int perPage = Math.min(100, Math.max(10, maxCommits));
+        
+        while (all.size() < maxCommits) {
+            try {
+                List<GitHubCommitResponse> batch = getCommits(owner, repo, page, perPage);
+                if (batch == null || batch.isEmpty()) {
+                    break;
+                }
+                all.addAll(batch);
+                if (batch.size() < perPage || all.size() >= maxCommits) {
+                    break;
+                }
+                page++;
+            } catch (Exception e) {
+                System.err.println("Notice: stopped commit pagination at page " + page + ": " + e.getMessage());
+                break;
+            }
+        }
+        return all;
+    }
+
+    public GitHubSingleCommitResponse getCommitDetails(String owner, String repo, String sha) {
+        String url = String.format("https://api.github.com/repos/%s/%s/commits/%s", owner, repo, sha);
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<GitHubSingleCommitResponse> response = restTemplate.exchange(
+                url, HttpMethod.GET, entity, GitHubSingleCommitResponse.class
         );
         return response.getBody();
     }

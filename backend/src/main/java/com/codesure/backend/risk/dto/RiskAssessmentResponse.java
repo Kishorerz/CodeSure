@@ -22,4 +22,5 @@ public class RiskAssessmentResponse {
     private int lowFindings;
     private List<String> keyRiskFactors;
     private String aiExplanation;
+    private List<PrioritizedFindingDto> prioritizedFindings;
 }

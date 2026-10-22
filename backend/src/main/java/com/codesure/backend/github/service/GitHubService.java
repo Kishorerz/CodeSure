@@ -1,15 +1,13 @@
 package com.codesure.backend.github.service;
 
+import com.codesure.backend.analyzer.service.CodeAnalyzerService;
 import com.codesure.backend.codechange.entity.ChangeType;
 import com.codesure.backend.codechange.entity.CodeChange;
 import com.codesure.backend.codechange.repository.CodeChangeJpaRepository;
 import com.codesure.backend.commit.entity.Commit;
 import com.codesure.backend.commit.repository.CommitJpaRepository;
 import com.codesure.backend.github.client.GitHubClient;
-import com.codesure.backend.github.dto.GitHubCommitResponse;
-import com.codesure.backend.github.dto.GitHubCompareResponse;
-import com.codesure.backend.github.dto.GitHubPullRequestResponse;
-import com.codesure.backend.github.dto.GitHubRepoResponse;
+import com.codesure.backend.github.dto.*;
 import com.codesure.backend.pullrequest.entity.PullRequest;
 import com.codesure.backend.pullrequest.entity.PullRequestState;
 import com.codesure.backend.pullrequest.repository.PullRequestJpaRepository;
@@ -35,6 +33,7 @@ public class GitHubService {
     private final CommitJpaRepository commitJpaRepository;
     private final CodeChangeJpaRepository codeChangeJpaRepository;
     private final PullRequestJpaRepository pullRequestJpaRepository;
+    private final CodeAnalyzerService codeAnalyzerService;
 
     private static final Pattern GITHUB_URL_PATTERN =
             Pattern.compile("(?:https?://)?(?:www\\.)?github\\.com/([\\w.-]+)/([\\w.-]+?)(?:\\.git)?(?:/.*)?$");
@@ -44,13 +43,15 @@ public class GitHubService {
             RepositoryJpaRepository repositoryJpaRepository,
             CommitJpaRepository commitJpaRepository,
             CodeChangeJpaRepository codeChangeJpaRepository,
-            PullRequestJpaRepository pullRequestJpaRepository
+            PullRequestJpaRepository pullRequestJpaRepository,
+            CodeAnalyzerService codeAnalyzerService
     ) {
         this.gitHubClient = gitHubClient;
         this.repositoryJpaRepository = repositoryJpaRepository;
         this.commitJpaRepository = commitJpaRepository;
         this.codeChangeJpaRepository = codeChangeJpaRepository;
         this.pullRequestJpaRepository = pullRequestJpaRepository;
+        this.codeAnalyzerService = codeAnalyzerService;
     }
 
     public static String[] parseOwnerAndRepo(String url) {
@@ -85,7 +86,6 @@ public class GitHubService {
                 if (ghRepo.getDefaultBranch() != null) defaultBranch = ghRepo.getDefaultBranch();
             }
         } catch (Exception e) {
-            // Log fallback when GitHub API is rate-limited or unreachable
             System.err.println("Notice: GitHub API fetch returned (" + e.getMessage() + "), using parsed URL fallback for " + canonicalUrl);
         }
 
@@ -94,7 +94,16 @@ public class GitHubService {
         repository.setProvider("GITHUB");
         repository.setDefaultBranch(defaultBranch);
 
-        return repositoryJpaRepository.save(repository);
+        Repository saved = repositoryJpaRepository.save(repository);
+
+        // Auto-sync commit history and analyze changes on registration
+        try {
+            syncCommits(saved.getId(), 30);
+        } catch (Exception e) {
+            System.err.println("Notice: Auto-syncing initial commits completed with warning: " + e.getMessage());
+        }
+
+        return saved;
     }
 
     @Transactional
@@ -105,15 +114,16 @@ public class GitHubService {
         String[] parts = parseOwnerAndRepo(repository.getRepositoryUrl());
         List<GitHubCommitResponse> ghCommits = null;
         try {
-            ghCommits = gitHubClient.getCommits(parts[0], parts[1], limit > 0 ? limit : 20);
+            int max = limit > 0 ? limit : 30;
+            ghCommits = gitHubClient.getAllCommitsUpTo(parts[0], parts[1], max);
         } catch (Exception e) {
             System.err.println("Notice: GitHub commit sync failed (" + e.getMessage() + "), returning existing commits.");
             return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
         }
 
         List<Commit> savedCommits = new ArrayList<>();
-        if (ghCommits == null) {
-            return savedCommits;
+        if (ghCommits == null || ghCommits.isEmpty()) {
+            return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
         }
 
         for (GitHubCommitResponse ghc : ghCommits) {
@@ -158,7 +168,55 @@ public class GitHubService {
             savedCommits.add(commitJpaRepository.save(commit));
         }
 
+        // Deep diff inspection and static code analysis on the most recent commits
+        analyzeRecentCommits(parts[0], parts[1], savedCommits);
+
         return savedCommits;
+    }
+
+    private void analyzeRecentCommits(String owner, String repo, List<Commit> commits) {
+        int countToAnalyze = Math.min(10, commits.size());
+        for (int i = 0; i < countToAnalyze; i++) {
+            Commit commit = commits.get(i);
+            try {
+                GitHubSingleCommitResponse details = gitHubClient.getCommitDetails(owner, repo, commit.getSha());
+                if (details != null && details.getFiles() != null) {
+                    for (GitHubCompareResponse.GitHubDiffFile file : details.getFiles()) {
+                        if (file.getFilename() == null) continue;
+
+                        CodeChange codeChange = codeChangeJpaRepository.findByCommitIdAndFilePath(commit.getId(), file.getFilename())
+                                .orElseGet(() -> {
+                                    CodeChange cc = new CodeChange();
+                                    cc.setCommit(commit);
+                                    cc.setFilePath(file.getFilename());
+                                    return cc;
+                                });
+
+                        codeChange.setAdditions(file.getAdditions() != null ? file.getAdditions() : 0);
+                        codeChange.setDeletions(file.getDeletions() != null ? file.getDeletions() : 0);
+                        codeChange.setPreviousFilePath(file.getPreviousFilename());
+                        codeChange.setPatch(file.getPatch());
+
+                        ChangeType type = ChangeType.MODIFIED;
+                        if ("added".equalsIgnoreCase(file.getStatus())) {
+                            type = ChangeType.ADDED;
+                        } else if ("removed".equalsIgnoreCase(file.getStatus())) {
+                            type = ChangeType.DELETED;
+                        } else if ("renamed".equalsIgnoreCase(file.getStatus())) {
+                            type = ChangeType.RENAMED;
+                        }
+                        codeChange.setChangeType(type);
+
+                        CodeChange savedChange = codeChangeJpaRepository.save(codeChange);
+
+                        // Trigger static analysis on the patch diff
+                        codeAnalyzerService.analyzeCodeChange(savedChange, file.getPatch());
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Notice: Skipped diff analysis for commit " + commit.getSha() + ": " + e.getMessage());
+            }
+        }
     }
 
     @Transactional
@@ -253,6 +311,7 @@ public class GitHubService {
             change.setAdditions(file.getAdditions() != null ? file.getAdditions() : 0);
             change.setDeletions(file.getDeletions() != null ? file.getDeletions() : 0);
             change.setPreviousFilePath(file.getPreviousFilename());
+            change.setPatch(file.getPatch());
 
             ChangeType type = ChangeType.MODIFIED;
             if ("added".equalsIgnoreCase(file.getStatus())) {
@@ -264,9 +323,16 @@ public class GitHubService {
             }
             change.setChangeType(type);
 
-            savedChanges.add(codeChangeJpaRepository.save(change));
+            CodeChange savedChange = codeChangeJpaRepository.save(change);
+            codeAnalyzerService.analyzeCodeChange(savedChange, file.getPatch());
+            savedChanges.add(savedChange);
         }
 
         return savedChanges;
+    }
+
+    @Transactional(readOnly = true)
+    public List<Commit> getRepositoryCommits(UUID repositoryId) {
+        return commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
     }
 }

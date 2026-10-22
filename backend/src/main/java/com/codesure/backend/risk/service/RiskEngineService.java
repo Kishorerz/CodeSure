@@ -9,10 +9,10 @@ import com.codesure.backend.finding.entity.Severity;
 import com.codesure.backend.finding.repository.FindingJpaRepository;
 import com.codesure.backend.repository.entity.Repository;
 import com.codesure.backend.repository.repository.RepositoryJpaRepository;
+import com.codesure.backend.risk.dto.PrioritizedFindingDto;
 import com.codesure.backend.risk.dto.RiskAssessmentResponse;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -70,8 +70,6 @@ public class RiskEngineService {
         }
 
         // Formula: Evidence weighted scoring
-        // Base score = (Critical * 35) + (High * 20) + (Medium * 8) + (Low * 2)
-        // Churn impact = min(25, (totalAdditions + totalDeletions) / 50.0)
         double findingScore = (critical * 35.0) + (high * 20.0) + (medium * 8.0) + (low * 2.0);
         double churnScore = Math.min(25.0, (totalAdditions + totalDeletions) / 50.0);
         double rawScore = findingScore + churnScore;
@@ -103,21 +101,72 @@ public class RiskEngineService {
             factors.add(String.format("High code churn detected (+%d / -%d lines across %d files).", totalAdditions, totalDeletions, totalFilesChanged));
         }
         if (commits.size() > 5) {
-            factors.add(String.format("Recent commit velocity active (%d commits tracked).", commits.size()));
+            factors.add(String.format("Active commit velocity (%d commits analyzed).", commits.size()));
         }
         if (factors.isEmpty()) {
             factors.add("Standard development churn within safe operating thresholds.");
         }
 
+        // Sort findings by priority rank
+        allFindings.sort((a, b) -> {
+            int rankA = a.getPriorityRank() != null ? a.getPriorityRank() : 999;
+            int rankB = b.getPriorityRank() != null ? b.getPriorityRank() : 999;
+            return Integer.compare(rankA, rankB);
+        });
+
+        List<PrioritizedFindingDto> prioritizedList = new ArrayList<>();
+        int currentRank = 1;
+        for (Finding f : allFindings) {
+            String filePath = f.getCodeChange() != null ? f.getCodeChange().getFilePath() : "source file";
+            String commitSha = (f.getCodeChange() != null && f.getCodeChange().getCommit() != null)
+                    ? f.getCodeChange().getCommit().getSha() : null;
+            String commitMsg = (f.getCodeChange() != null && f.getCodeChange().getCommit() != null)
+                    ? f.getCodeChange().getCommit().getMessage() : null;
+
+            String criticalityReason = switch (f.getSeverity()) {
+                case CRITICAL -> "Priority 1 (CRITICAL): Block merge immediately. Credentials or critical flaw exposed.";
+                case HIGH -> "Priority 2 (HIGH): Exploit risk present. Fix before production deployment.";
+                case MEDIUM -> "Priority 3 (MEDIUM): Architectural or configuration exposure. Schedule prompt fix.";
+                case LOW -> "Priority 4 (LOW): Code quality/maintainability smell. Clean up during review.";
+            };
+
+            prioritizedList.add(PrioritizedFindingDto.builder()
+                    .id(f.getId())
+                    .priorityRank(currentRank++)
+                    .severity(f.getSeverity().name())
+                    .ruleId(f.getRuleId())
+                    .message(f.getMessage())
+                    .filePath(filePath)
+                    .lineNumber(f.getLineNumber())
+                    .commitSha(commitSha != null && commitSha.length() > 7 ? commitSha.substring(0, 7) : commitSha)
+                    .commitMessage(commitMsg)
+                    .rootCause(f.getRootCause() != null ? f.getRootCause() : "Potential issue flagged by static analysis pattern.")
+                    .remediation(f.getRemediation() != null ? f.getRemediation() : "Review the modified line and sanitize inputs or adhere to secure coding patterns.")
+                    .criticalityReason(criticalityReason)
+                    .build());
+        }
+
         // Evidence-Based Explanation (Rule 11: Explain WHY based on evidence)
         StringBuilder explanation = new StringBuilder();
-        explanation.append("DevSentinel evaluated ").append(repository.getName())
+        explanation.append("DevSentinel analyzed ").append(repository.getName())
                 .append(" with an evidence-backed score of ").append(String.format("%.1f", finalScore))
-                .append("/100 (Level: ").append(level).append(").\n\n");
+                .append("/100 (Risk Level: ").append(level).append(").\n\n");
         explanation.append("Key Evidence Observed:\n");
         for (String factor : factors) {
             explanation.append("• ").append(factor).append("\n");
         }
+
+        if (!prioritizedList.isEmpty()) {
+            explanation.append("\nTop Priority Action Items for Developer:\n");
+            int previewCount = Math.min(3, prioritizedList.size());
+            for (int i = 0; i < previewCount; i++) {
+                PrioritizedFindingDto item = prioritizedList.get(i);
+                explanation.append(String.format("  [%d] %s (%s, line %d)\n", item.getPriorityRank(), item.getMessage(), item.getFilePath(), item.getLineNumber()));
+                explanation.append(String.format("      - Why: %s\n", item.getRootCause()));
+                explanation.append(String.format("      - Fix first: %s\n", item.getRemediation()));
+            }
+        }
+
         explanation.append("\nRecommended Developer Action: ");
         if ("CRITICAL".equals(level)) {
             explanation.append("Immediate triage required. Block PR/merge until critical findings (e.g. hardcoded credentials or critical flaws) are remediated.");
@@ -144,6 +193,7 @@ public class RiskEngineService {
                 .lowFindings(low)
                 .keyRiskFactors(factors)
                 .aiExplanation(explanation.toString())
+                .prioritizedFindings(prioritizedList)
                 .build();
     }
 }

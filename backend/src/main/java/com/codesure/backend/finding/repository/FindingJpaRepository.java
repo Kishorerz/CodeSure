@@ -14,5 +14,6 @@ public interface FindingJpaRepository extends JpaRepository<Finding, UUID> {
     Optional<Finding> findByCodeChangeIdAndRuleIdAndLineNumber(UUID codeChangeId, String ruleId, Integer lineNumber);
     List<Finding> findByCodeChangeId(UUID codeChangeId);
     List<Finding> findByCodeChangeCommitRepositoryId(UUID repositoryId);
+    List<Finding> findByCodeChangeCommitRepositoryIdOrderByPriorityRankAsc(UUID repositoryId);
     long countByCodeChangeCommitRepositoryIdAndSeverity(UUID repositoryId, Severity severity);
 }

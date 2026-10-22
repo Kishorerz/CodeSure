@@ -42,6 +42,9 @@ public class CodeChange {
     @Column(nullable = false)
     private Integer deletions;
 
+    @Column(name = "patch", columnDefinition = "TEXT")
+    private String patch;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -81,6 +84,10 @@ public class CodeChange {
         return deletions;
     }
 
+    public String getPatch() {
+        return patch;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -107,5 +114,9 @@ public class CodeChange {
 
     public void setDeletions(Integer deletions) {
         this.deletions = deletions;
+    }
+
+    public void setPatch(String patch) {
+        this.patch = patch;
     }
 }

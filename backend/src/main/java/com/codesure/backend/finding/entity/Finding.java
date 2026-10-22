@@ -46,6 +46,15 @@ public class Finding {
     @Column(nullable = false)
     private Analyzer analyzer;
 
+    @Column(name = "root_cause", length = 1000)
+    private String rootCause;
+
+    @Column(name = "remediation", length = 1000)
+    private String remediation;
+
+    @Column(name = "priority_rank")
+    private Integer priorityRank;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -99,6 +108,18 @@ public class Finding {
         return analyzer;
     }
 
+    public String getRootCause() {
+        return rootCause;
+    }
+
+    public String getRemediation() {
+        return remediation;
+    }
+
+    public Integer getPriorityRank() {
+        return priorityRank;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -133,5 +154,17 @@ public class Finding {
 
     public void setAnalyzer(Analyzer analyzer) {
         this.analyzer = analyzer;
+    }
+
+    public void setRootCause(String rootCause) {
+        this.rootCause = rootCause;
+    }
+
+    public void setRemediation(String remediation) {
+        this.remediation = remediation;
+    }
+
+    public void setPriorityRank(Integer priorityRank) {
+        this.priorityRank = priorityRank;
     }
 }
