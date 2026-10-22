@@ -1,6 +1,8 @@
 package com.codesure.backend.analyzer.controller;
 
+import com.codesure.backend.analyzer.dto.FixSuggestionDto;
 import com.codesure.backend.analyzer.service.CodeAnalyzerService;
+import com.codesure.backend.analyzer.service.RemediationFixService;
 import com.codesure.backend.codechange.entity.CodeChange;
 import com.codesure.backend.codechange.repository.CodeChangeJpaRepository;
 import com.codesure.backend.finding.entity.Finding;
@@ -18,15 +20,18 @@ public class AnalyzerController {
     private final CodeAnalyzerService codeAnalyzerService;
     private final CodeChangeJpaRepository codeChangeJpaRepository;
     private final FindingJpaRepository findingJpaRepository;
+    private final RemediationFixService remediationFixService;
 
     public AnalyzerController(
             CodeAnalyzerService codeAnalyzerService,
             CodeChangeJpaRepository codeChangeJpaRepository,
-            FindingJpaRepository findingJpaRepository
+            FindingJpaRepository findingJpaRepository,
+            RemediationFixService remediationFixService
     ) {
         this.codeAnalyzerService = codeAnalyzerService;
         this.codeChangeJpaRepository = codeChangeJpaRepository;
         this.findingJpaRepository = findingJpaRepository;
+        this.remediationFixService = remediationFixService;
     }
 
     @PostMapping("/scan-change/{codeChangeId}")
@@ -44,5 +49,10 @@ public class AnalyzerController {
     @GetMapping("/findings-by-change/{codeChangeId}")
     public List<Finding> getFindingsByChange(@PathVariable UUID codeChangeId) {
         return findingJpaRepository.findByCodeChangeId(codeChangeId);
+    }
+
+    @GetMapping("/fix-suggestion/{findingId}")
+    public FixSuggestionDto getFixSuggestion(@PathVariable UUID findingId) {
+        return remediationFixService.generateFixSuggestion(findingId);
     }
 }

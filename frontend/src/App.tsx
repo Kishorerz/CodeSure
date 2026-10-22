@@ -117,6 +117,60 @@ interface HistoricalMetrics {
   topAuthors: AuthorMetric[];
 }
 
+interface FixSuggestion {
+  findingId: string;
+  ruleId: string;
+  filePath: string;
+  lineNumber: number;
+  title: string;
+  beforeSnippet: string;
+  afterSnippet: string;
+  unifiedDiff: string;
+  explanation: string;
+  confidenceLevel: string;
+  securityBestPractices: string[];
+}
+
+interface SiloedFile {
+  filePath: string;
+  dominantAuthor: string;
+  dominancePercentage: number;
+  totalCommits: number;
+  totalChurn: number;
+  defectCount: number;
+  criticalDefects: number;
+  siloRiskLevel: string;
+  recommendation: string;
+}
+
+interface ContributorProfile {
+  authorName: string;
+  commitCount: number;
+  additions: number;
+  deletions: number;
+  totalChurn: number;
+  churnPercentage: number;
+  siloedFilesCount: number;
+  defectsAssociated: number;
+  criticalDefectsAssociated: number;
+  contributorRiskLevel: string;
+  recommendation: string;
+}
+
+interface BusFactorAnalysis {
+  repositoryId: string;
+  repositoryName: string;
+  branch: string;
+  overallBusFactor: number;
+  busFactorStatus: string;
+  coreAuthorsConcentration: number;
+  totalSiloedFiles: number;
+  executiveSummary: string;
+  highRiskSilos: SiloedFile[];
+  contributorProfiles: ContributorProfile[];
+  teamRecommendations: string[];
+}
+
 const rawApiBase = import.meta.env.VITE_API_BASE_URL || "";
 const API_BASE = rawApiBase.replace(/\/+$/, "");
 
@@ -146,6 +200,10 @@ export default function App() {
   const [riskAssessment, setRiskAssessment] = useState<RiskAssessment | null>(null);
   const [historicalMetrics, setHistoricalMetrics] = useState<HistoricalMetrics | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState<boolean>(false);
+  const [busFactorData, setBusFactorData] = useState<BusFactorAnalysis | null>(null);
+  const [activeFixModal, setActiveFixModal] = useState<FixSuggestion | null>(null);
+  const [loadingFixId, setLoadingFixId] = useState<string | null>(null);
+  const [copiedDiff, setCopiedDiff] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<"priorities" | "historical" | "commits" | "allFindings">("priorities");
 
   // Build headers with optional X-GitHub-Token
@@ -240,6 +298,12 @@ export default function App() {
       .then((data) => setHistoricalMetrics(data))
       .catch(() => setHistoricalMetrics(null))
       .finally(() => setLoadingMetrics(false));
+
+    // Fetch branch bus factor & contributor risk analysis
+    fetch(`${API_BASE}/api/repositories/${repoId}/bus-factor?branch=${encodedBranch}`, { headers: getHeaders() })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setBusFactorData(data))
+      .catch(() => setBusFactorData(null));
   };
 
   const fetchBranches = async (repo: Repository) => {
@@ -365,6 +429,8 @@ export default function App() {
           setFindings([]);
           setRiskAssessment(null);
           setHistoricalMetrics(null);
+          setBusFactorData(null);
+          setActiveFixModal(null);
           setBranches([]);
         }
       }
@@ -470,6 +536,39 @@ export default function App() {
     return "critical";
   };
 
+  const getBusFactorStatusClass = (status: string) => {
+    switch (status) {
+      case "CRITICAL_RISK":
+        return "badge critical";
+      case "MODERATE_RISK":
+        return "badge high";
+      default:
+        return "badge low";
+    }
+  };
+
+  const getSiloBadgeClass = (level: string) => {
+    if (level.includes("CRITICAL")) return "badge critical";
+    if (level.includes("HIGH")) return "badge high";
+    return "badge medium";
+  };
+
+  const handleOpenFixModal = async (findingId: string) => {
+    setLoadingFixId(findingId);
+    setCopiedDiff(false);
+    try {
+      const res = await fetch(`${API_BASE}/api/analyzer/fix-suggestion/${findingId}`, { headers: getHeaders() });
+      if (res.ok) {
+        const data: FixSuggestion = await res.json();
+        setActiveFixModal(data);
+      }
+    } catch (e) {
+      console.error("Failed to load fix suggestion", e);
+    } finally {
+      setLoadingFixId(null);
+    }
+  };
+
   const prioritizedList = riskAssessment?.prioritizedFindings || [];
 
   return (
@@ -536,6 +635,122 @@ export default function App() {
               )}
               <button onClick={() => setShowTokenModal(false)} className="btn-outline-small">
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Automated Remediation Fix & Diff Modal */}
+      {activeFixModal && (
+        <div className="modal-backdrop" onClick={() => setActiveFixModal(null)}>
+          <div className="modal-content fix-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="fix-modal-header">
+              <div className="header-meta">
+                <span className="pill badge-pill">✨ One-Click Auto-Fix</span>
+                <span className="confidence-pill">{activeFixModal.confidenceLevel} CONFIDENCE</span>
+                <span className="rule-badge">{activeFixModal.ruleId}</span>
+              </div>
+              <button className="btn-close-modal" onClick={() => setActiveFixModal(null)}>✕</button>
+            </div>
+
+            <h3 className="fix-modal-title">{activeFixModal.title}</h3>
+            <p className="fix-location">
+              File Target: <code>{activeFixModal.filePath}:{activeFixModal.lineNumber}</code>
+            </p>
+
+            <div className="fix-explanation-box">
+              <strong>Security Vulnerability Analysis:</strong>
+              <p>{activeFixModal.explanation}</p>
+            </div>
+
+            {/* Unified Diff View */}
+            <div className="diff-container">
+              <div className="diff-header">
+                <span>Unified Git Patch (.diff)</span>
+                <button
+                  type="button"
+                  className="btn-copy-patch"
+                  onClick={() => {
+                    navigator.clipboard.writeText(activeFixModal.unifiedDiff);
+                    setCopiedDiff(true);
+                    setTimeout(() => setCopiedDiff(false), 2500);
+                  }}
+                >
+                  {copiedDiff ? "✓ Patch Copied!" : "📋 Copy Diff Patch"}
+                </button>
+              </div>
+              <pre className="diff-pre">
+                {activeFixModal.unifiedDiff.split("\n").map((line, idx) => {
+                  let lineClass = "diff-line";
+                  if (line.startsWith("+") && !line.startsWith("+++")) lineClass += " diff-add";
+                  else if (line.startsWith("-") && !line.startsWith("---")) lineClass += " diff-del";
+                  else if (line.startsWith("@@")) lineClass += " diff-hunk";
+                  return (
+                    <div key={idx} className={lineClass}>
+                      {line}
+                    </div>
+                  );
+                })}
+              </pre>
+            </div>
+
+            {/* Side-by-side Before & After */}
+            <div className="code-comparison-grid">
+              <div className="code-box before-box">
+                <div className="code-box-header">
+                  <span className="dot dot-red"></span>
+                  <span>Vulnerable Code (Before)</span>
+                </div>
+                <pre className="code-content">{activeFixModal.beforeSnippet}</pre>
+              </div>
+
+              <div className="code-box after-box">
+                <div className="code-box-header">
+                  <span className="dot dot-green"></span>
+                  <span>Remediated Safe Code (After)</span>
+                  <button
+                    type="button"
+                    className="btn-copy-code"
+                    onClick={() => {
+                      navigator.clipboard.writeText(activeFixModal.afterSnippet);
+                      setCopiedDiff(true);
+                      setTimeout(() => setCopiedDiff(false), 2500);
+                    }}
+                  >
+                    Copy Code
+                  </button>
+                </div>
+                <pre className="code-content">{activeFixModal.afterSnippet}</pre>
+              </div>
+            </div>
+
+            {/* Best practices checklist */}
+            {activeFixModal.securityBestPractices && activeFixModal.securityBestPractices.length > 0 && (
+              <div className="best-practices-box">
+                <h4>🛡️ Prescriptive Security Checklist</h4>
+                <ul>
+                  {activeFixModal.securityBestPractices.map((bp, i) => (
+                    <li key={i}>{bp}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  navigator.clipboard.writeText(activeFixModal.afterSnippet);
+                  setCopiedDiff(true);
+                  setTimeout(() => setCopiedDiff(false), 2500);
+                }}
+              >
+                {copiedDiff ? "✓ Code Copied to Clipboard!" : "Copy Clean Code"}
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => setActiveFixModal(null)}>
+                Close
               </button>
             </div>
           </div>
@@ -857,6 +1072,18 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* One-Click Auto-Fix Button */}
+                          <div className="card-action-bar">
+                            <button
+                              type="button"
+                              className="btn-auto-fix"
+                              disabled={loadingFixId === item.id}
+                              onClick={() => handleOpenFixModal(item.id)}
+                            >
+                              {loadingFixId === item.id ? "✨ Generating Fix Patch..." : "✨ View Remediation Diff & Auto-Fix"}
+                            </button>
+                          </div>
+
                           {/* Commit Context Footer */}
                           {(item.commitSha || item.commitMessage) && (
                             <div className="commit-source-footer">
@@ -977,6 +1204,137 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Contributor Risk Profiling & Bus Factor Intelligence */}
+                      {busFactorData && (
+                        <div className="bus-factor-section">
+                          <h4 className="sub-heading">🧑‍💻 Contributor Risk Profiling & Bus Factor Alert</h4>
+                          <p className="sub-desc">
+                            Evaluates team resilience, key-person risk, and file knowledge silos where a single developer monopolizes code modifications and security defects.
+                          </p>
+
+                          {/* Bus Factor Hero Card */}
+                          <div className="bus-factor-banner">
+                            <div className="bus-factor-score-card">
+                              <span className="bus-factor-label">Repository Bus Factor</span>
+                              <div className="bus-factor-number">
+                                {busFactorData.overallBusFactor}
+                              </div>
+                              <span className={getBusFactorStatusClass(busFactorData.busFactorStatus)}>
+                                {busFactorData.busFactorStatus.replace(/_/g, " ")}
+                              </span>
+                            </div>
+                            <div className="bus-factor-summary-box">
+                              <h4>Key-Person Dependency & Knowledge Silo Assessment</h4>
+                              <p>{busFactorData.executiveSummary}</p>
+                              <div className="bus-factor-stats-row">
+                                <div className="bf-stat">
+                                  <span className="bf-stat-label">Core Author Concentration:</span>
+                                  <span className="bf-stat-value">{busFactorData.coreAuthorsConcentration}% of Churn</span>
+                                </div>
+                                <div className="bf-stat">
+                                  <span className="bf-stat-label">Identified Knowledge Silos:</span>
+                                  <span className="bf-stat-value text-danger">{busFactorData.totalSiloedFiles} Files</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* High-Risk Siloed Files Table */}
+                          {busFactorData.highRiskSilos.length > 0 && (
+                            <div className="silos-table-card">
+                              <div className="silos-table-header">
+                                <h5>🚨 High-Risk File Knowledge Silos ({busFactorData.highRiskSilos.length})</h5>
+                                <span className="silos-desc">Files where 75%+ of modifications are executed by a single author without co-maintenance</span>
+                              </div>
+                              <div className="hotspots-table-wrap">
+                                <table className="hotspots-table">
+                                  <thead>
+                                    <tr>
+                                      <th>File Path</th>
+                                      <th>Dominant Contributor</th>
+                                      <th>Monopoly %</th>
+                                      <th>Changes</th>
+                                      <th>Line Churn</th>
+                                      <th>Defects</th>
+                                      <th>Silo Risk</th>
+                                      <th>Actionable Recommendation</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {busFactorData.highRiskSilos.map((s, idx) => (
+                                      <tr key={idx}>
+                                        <td className="hotspot-filepath"><code>{s.filePath}</code></td>
+                                        <td><strong>{s.dominantAuthor}</strong></td>
+                                        <td><span className="dominance-pill">{s.dominancePercentage}%</span></td>
+                                        <td>{s.totalCommits}</td>
+                                        <td>{s.totalChurn.toLocaleString()}</td>
+                                        <td>
+                                          {s.defectCount > 0 ? (
+                                            <span className="text-danger font-bold">{s.defectCount} ({s.criticalDefects} Crit)</span>
+                                          ) : (
+                                            <span className="text-muted">0</span>
+                                          )}
+                                        </td>
+                                        <td>
+                                          <span className={getSiloBadgeClass(s.siloRiskLevel)}>
+                                            {s.siloRiskLevel.replace(/_/g, " ")}
+                                          </span>
+                                        </td>
+                                        <td className="recommendation-cell">
+                                          <span className="remediation-text">{s.recommendation}</span>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Contributor Profiles & Team Recommendations */}
+                          <div className="bus-factor-details-grid">
+                            {/* Contributor Risk Matrix */}
+                            <div className="contributor-profiles-col">
+                              <h5>Contributor Key-Person Dependency Profiles</h5>
+                              <div className="contributor-cards-list">
+                                {busFactorData.contributorProfiles.map((cp, idx) => (
+                                  <div key={idx} className="contributor-profile-card">
+                                    <div className="cp-header">
+                                      <span className="cp-name">{cp.authorName}</span>
+                                      <span className={getSiloBadgeClass(cp.contributorRiskLevel)}>
+                                        {cp.contributorRiskLevel.replace(/_/g, " ")}
+                                      </span>
+                                    </div>
+                                    <div className="cp-stats-grid">
+                                      <div><span className="text-muted">Share of Churn:</span> <strong>{cp.churnPercentage}%</strong></div>
+                                      <div><span className="text-muted">Commits:</span> <strong>{cp.commitCount}</strong></div>
+                                      <div><span className="text-muted">Silos Controlled:</span> <strong className={cp.siloedFilesCount > 0 ? "text-danger" : ""}>{cp.siloedFilesCount}</strong></div>
+                                      <div><span className="text-muted">Associated Defects:</span> <strong className={cp.defectsAssociated > 0 ? "text-danger" : ""}>{cp.defectsAssociated}</strong></div>
+                                    </div>
+                                    <div className="cp-reco">{cp.recommendation}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Agile / Team Governance Checklist */}
+                            <div className="team-reco-col">
+                              <h5>🛡️ Agile Team Governance & Review Directives</h5>
+                              <div className="team-reco-card">
+                                <ul className="team-reco-list">
+                                  {busFactorData.teamRecommendations.map((tr, idx) => (
+                                    <li key={idx}>
+                                      <span className="check-bullet">✔</span>
+                                      <span>{tr}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* File Hotspots Table */}
                       <div className="hotspots-section">
@@ -1191,6 +1549,7 @@ export default function App() {
                             <th>Issue Message</th>
                             <th>Line</th>
                             <th>Analyzer</th>
+                            <th>Auto-Fix Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1203,6 +1562,16 @@ export default function App() {
                               <td>{f.message}</td>
                               <td>Line {f.lineNumber}</td>
                               <td>{f.analyzer}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn-quick-fix"
+                                  disabled={loadingFixId === f.id}
+                                  onClick={() => handleOpenFixModal(f.id)}
+                                >
+                                  {loadingFixId === f.id ? "Loading..." : "✨ Fix Diff"}
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>

@@ -1452,3 +1452,535 @@ body {
   background: linear-gradient(90deg, #3b82f6, #60a5fa);
   border-radius: 3px;
 }
+
+/* ==========================================================================
+   Automated Remediation Diff Modal & Auto-Fix Buttons
+   ========================================================================== */
+
+.card-action-bar {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-auto-fix {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+  transition: transform 0.15s, box-shadow 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-auto-fix:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.45);
+}
+
+.btn-quick-fix {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-quick-fix:hover {
+  background: rgba(59, 130, 246, 0.3);
+  color: #ffffff;
+}
+
+/* Fix Modal */
+.fix-modal-content {
+  max-width: 820px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.75rem;
+}
+
+.fix-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.header-meta {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.confidence-pill {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.btn-close-modal {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.btn-close-modal:hover {
+  color: var(--text-primary);
+}
+
+.fix-modal-title {
+  margin: 0.25rem 0 0.5rem 0;
+  font-size: 1.3rem;
+  color: var(--text-primary);
+}
+
+.fix-location {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.fix-location code {
+  color: #93c5fd;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}
+
+.fix-explanation-box {
+  background: rgba(30, 41, 59, 0.7);
+  border-left: 3px solid #3b82f6;
+  padding: 0.85rem 1rem;
+  border-radius: 0 8px 8px 0;
+  margin-bottom: 1.25rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.fix-explanation-box p {
+  margin: 0.35rem 0 0 0;
+}
+
+/* Diff Container */
+.diff-container {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1.25rem;
+}
+
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.btn-copy-patch {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-copy-patch:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.diff-pre {
+  margin: 0;
+  padding: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-x: auto;
+}
+
+.diff-line {
+  white-space: pre;
+  padding: 0.05rem 0.25rem;
+}
+
+.diff-add {
+  background-color: rgba(46, 160, 67, 0.2);
+  color: #56d364;
+}
+
+.diff-del {
+  background-color: rgba(248, 81, 73, 0.2);
+  color: #ff7b72;
+}
+
+.diff-hunk {
+  color: #8b949e;
+  font-style: italic;
+  background: rgba(110, 118, 129, 0.1);
+}
+
+/* Side-by-side Before & After Code Box */
+.code-comparison-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .code-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.code-box {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.code-box.before-box {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.code-box.after-box {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.code-box-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot-red { background: #ef4444; }
+.dot-green { background: #10b981; }
+
+.btn-copy-code {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-copy-code:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.code-content {
+  margin: 0;
+  padding: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-x: auto;
+  color: #e2e8f0;
+}
+
+/* Best Practices */
+.best-practices-box {
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.best-practices-box h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.best-practices-box ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-size: 0.82rem;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Contributor Risk Profiling & Bus Factor Alert Styles
+   ========================================================================== */
+
+.bus-factor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.bus-factor-banner {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 1.5rem;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .bus-factor-banner {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bus-factor-score-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1.25rem;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+.bus-factor-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.bus-factor-number {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-primary);
+  margin: 0.35rem 0;
+}
+
+.bus-factor-summary-box h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+
+.bus-factor-summary-box p {
+  margin: 0 0 1rem 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.bus-factor-stats-row {
+  display: flex;
+  gap: 2rem;
+  font-size: 0.82rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.bf-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bf-stat-label {
+  color: var(--text-muted);
+}
+
+.bf-stat-value {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Silos Table Card */
+.silos-table-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.silos-table-header h5 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.silos-desc {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.dominance-pill {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Bus Factor Details Grid */
+.bus-factor-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .bus-factor-details-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.contributor-profiles-col,
+.team-reco-col {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.contributor-profiles-col h5,
+.team-reco-col h5 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.contributor-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 0.35rem;
+}
+
+.contributor-profile-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cp-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.cp-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+}
+
+.cp-reco {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  line-height: 1.4;
+  border-left: 2px solid var(--accent);
+}
+
+/* Team Directives Checklist */
+.team-reco-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.team-reco-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.team-reco-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  font-size: 0.84rem;
+  color: #e2e8f0;
+  line-height: 1.45;
+}
+
+.check-bullet {
+  color: #34d399;
+  font-weight: 800;
+  font-size: 0.95rem;
+}
