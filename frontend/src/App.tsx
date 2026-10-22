@@ -205,6 +205,7 @@ export default function App() {
   const [loadingFixId, setLoadingFixId] = useState<string | null>(null);
   const [copiedDiff, setCopiedDiff] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<"priorities" | "historical" | "commits" | "allFindings">("priorities");
+  const [searchTerm, setSearchTerm] = useState<string>("");
 
   // Build headers with optional X-GitHub-Token
   const getHeaders = (extra: Record<string, string> = {}) => {
@@ -571,29 +572,30 @@ export default function App() {
 
   const prioritizedList = riskAssessment?.prioritizedFindings || [];
 
+  const filteredPriorities = prioritizedList.filter((item) => {
+    if (!searchTerm.trim()) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      item.ruleId.toLowerCase().includes(term) ||
+      item.message.toLowerCase().includes(term) ||
+      (item.filePath && item.filePath.toLowerCase().includes(term)) ||
+      (item.rootCause && item.rootCause.toLowerCase().includes(term)) ||
+      (item.remediation && item.remediation.toLowerCase().includes(term))
+    );
+  });
+
+  const filteredFindings = findings.filter((f) => {
+    if (!searchTerm.trim()) return true;
+    const term = searchTerm.toLowerCase();
+    return (
+      f.ruleId.toLowerCase().includes(term) ||
+      f.message.toLowerCase().includes(term) ||
+      f.analyzer.toLowerCase().includes(term)
+    );
+  });
+
   return (
-    <div className="codesure-app">
-      <header className="codesure-header">
-        <div className="brand">
-          <h1>DevSentinel <span className="subtitle">CodeSure Risk Platform</span></h1>
-        </div>
-        <div className="status-indicators">
-          <span className={`pill ${backendStatus === "Connected" ? "online" : "offline"}`}>
-            Backend: {backendStatus}
-          </span>
-          <button
-            type="button"
-            className={`pill token-pill ${githubToken ? "online" : "warning-pill"}`}
-            onClick={() => {
-              setTokenInput(githubToken);
-              setShowTokenModal(true);
-            }}
-          >
-            🔑 GitHub Token: {githubToken ? "Active (5,000/hr)" : "Unset (60/hr Limit)"}
-          </button>
-          <span className="pill badge-pill">Multi-Branch Vulnerability Analysis</span>
-        </div>
-      </header>
+    <div className="dashtrap-app">
 
       {/* GitHub Token Modal */}
       {showTokenModal && (
@@ -757,30 +759,79 @@ export default function App() {
         </div>
       )}
 
-      <div className="codesure-layout">
-        {/* Sidebar */}
-        <aside className="codesure-sidebar">
-          <h3>Connected Repositories ({repositories.length})</h3>
-          <form onSubmit={handleRegisterRepo} className="repo-form">
+      {/* Dashtrap Oceanic Navy Sidebar */}
+      <aside className="dashtrap-sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-logo-icon">💎</div>
+          <div className="brand-titles">
+            <span className="brand-name">CODESURE</span>
+            <span className="brand-sub">RISK INTELLIGENCE</span>
+          </div>
+        </div>
+
+        <div className="sidebar-scrollable">
+          <div className="sidebar-section-title">MENU</div>
+          <nav className="sidebar-nav">
+            <button
+              type="button"
+              className={`sidebar-nav-item ${activeTab === "priorities" ? "active" : ""}`}
+              onClick={() => setActiveTab("priorities")}
+            >
+              <span className="nav-icon">📊</span>
+              <span>Dashboard</span>
+              {prioritizedList.length > 0 && <span className="nav-counter">{prioritizedList.length}</span>}
+            </button>
+            <button
+              type="button"
+              className={`sidebar-nav-item ${activeTab === "historical" ? "active" : ""}`}
+              onClick={() => setActiveTab("historical")}
+            >
+              <span className="nav-icon">📈</span>
+              <span>Churn & Hotspots</span>
+              {historicalMetrics && <span className="nav-counter">{historicalMetrics.topHotspots.length}</span>}
+            </button>
+            <button
+              type="button"
+              className={`sidebar-nav-item ${activeTab === "commits" ? "active" : ""}`}
+              onClick={() => setActiveTab("commits")}
+            >
+              <span className="nav-icon">🌿</span>
+              <span>Branch Commits</span>
+              {commits.length > 0 && <span className="nav-counter">{commits.length}</span>}
+            </button>
+            <button
+              type="button"
+              className={`sidebar-nav-item ${activeTab === "allFindings" ? "active" : ""}`}
+              onClick={() => setActiveTab("allFindings")}
+            >
+              <span className="nav-icon">🔍</span>
+              <span>Raw Findings</span>
+              {findings.length > 0 && <span className="nav-counter">{findings.length}</span>}
+            </button>
+          </nav>
+
+          <div className="sidebar-section-title">CONNECT REPOSITORY</div>
+          <form onSubmit={handleRegisterRepo} className="sidebar-repo-form">
             <input
               type="text"
               placeholder="https://github.com/owner/repo"
               value={repoUrlInput}
               onChange={(e) => setRepoUrlInput(e.target.value)}
               disabled={loading}
+              className="sidebar-repo-input"
             />
-            <button type="submit" disabled={loading || !repoUrlInput.trim()}>
-              {loading ? "Analyzing Repo..." : "+ Connect & Analyze Repo"}
+            <button type="submit" disabled={loading || !repoUrlInput.trim()} className="sidebar-repo-btn">
+              {loading ? "Analyzing..." : "+ Connect & Analyze"}
             </button>
           </form>
 
           {errorMsg && (
-            <div className="error-alert">
+            <div className="sidebar-error-alert">
               <span>{errorMsg}</span>
               {!githubToken && (
                 <button
                   type="button"
-                  className="btn-token-quick"
+                  className="sidebar-token-quick"
                   onClick={() => setShowTokenModal(true)}
                 >
                   Add GitHub Token (Fix 403 Rate Limit)
@@ -789,20 +840,23 @@ export default function App() {
             </div>
           )}
 
-          <div className="repo-list">
+          <div className="sidebar-section-title">
+            CONNECTED REPOSITORIES ({repositories.length})
+          </div>
+          <div className="sidebar-repo-list">
             {repositories.length === 0 ? (
-              <p className="empty-hint">No repositories connected yet. Paste a GitHub repository URL above.</p>
+              <p className="sidebar-empty-hint">No repositories connected yet. Paste a GitHub repository URL above.</p>
             ) : (
               repositories.map((repo) => (
                 <div
                   key={repo.id}
-                  className={`repo-card ${selectedRepo?.id === repo.id ? "active" : ""}`}
+                  className={`sidebar-repo-card ${selectedRepo?.id === repo.id ? "active" : ""}`}
                   onClick={() => selectRepository(repo)}
                 >
-                  <div className="repo-card-top">
-                    <h4>{repo.name}</h4>
+                  <div className="sidebar-repo-top">
+                    <span className="sidebar-repo-name" title={repo.name}>{repo.name}</span>
                     <button
-                      className="btn-delete-repo"
+                      className="sidebar-repo-del"
                       title="Delete Repository"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -812,16 +866,82 @@ export default function App() {
                       ✕
                     </button>
                   </div>
-                  <p className="repo-url">{repo.repositoryUrl}</p>
-                  <span className="tag">Default: {repo.defaultBranch}</span>
+                  <span className="sidebar-repo-branch">🌿 {repo.defaultBranch}</span>
                 </div>
               ))
             )}
           </div>
-        </aside>
 
-        {/* Main Content */}
-        <main className="codesure-main">
+          <div className="sidebar-section-title">SYSTEM STATUS</div>
+          <div className="sidebar-status-box">
+            <div className="sidebar-status-row">
+              <span className={`status-dot ${backendStatus === "Connected" ? "online" : "offline"}`}></span>
+              <span className="status-label">Backend: {backendStatus}</span>
+            </div>
+            <button
+              type="button"
+              className={`sidebar-token-btn ${githubToken ? "token-active" : "token-unset"}`}
+              onClick={() => {
+                setTokenInput(githubToken);
+                setShowTokenModal(true);
+              }}
+            >
+              🔑 {githubToken ? "Token Active (5,000/hr)" : "Set Token (60/hr Limit)"}
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Wrapper: Topbar + Main Canvas */}
+      <div className="dashtrap-main-wrapper">
+        <header className="dashtrap-topbar">
+          <div className="topbar-search">
+            <span className="search-icon">🔍</span>
+            <input
+              type="text"
+              placeholder="Search findings, rules, files..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="topbar-search-input"
+            />
+            {searchTerm && (
+              <button className="search-clear-btn" onClick={() => setSearchTerm("")}>✕</button>
+            )}
+          </div>
+
+          <div className="topbar-right">
+            <div className="topbar-breadcrumbs">
+              <span className="crumb-root">CodeSure</span>
+              <span className="crumb-sep">/</span>
+              <span className="crumb-repo">{selectedRepo ? selectedRepo.name : "Repository"}</span>
+              <span className="crumb-sep">/</span>
+              <span className="crumb-branch">🌿 {selectedBranch}</span>
+            </div>
+
+            <button
+              type="button"
+              className={`topbar-token-badge ${githubToken ? "token-active" : "token-warning"}`}
+              onClick={() => {
+                setTokenInput(githubToken);
+                setShowTokenModal(true);
+              }}
+            >
+              🔑 {githubToken ? "5,000 req/hr" : "60 req/hr"}
+            </button>
+
+            <div className="topbar-icon-action" title="Live System Notifications">
+              <span className="bell-icon">🔔</span>
+              <span className="notif-dot"></span>
+            </div>
+
+            <div className="topbar-user-profile" title="Developer Session">
+              <span className="user-avatar-circle">CS</span>
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content Area */}
+        <main className="dashtrap-main-content">
           {selectedRepo ? (
             <>
               {/* Header Actions & Branch Switcher Bar */}
@@ -931,42 +1051,87 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Risk Intelligence Card */}
-              {riskAssessment && (
-                <section className="risk-overview-card">
-                  <div className="risk-score-box">
-                    <span className="risk-title">BRANCH RISK SCORE</span>
-                    <div className="score-value">{riskAssessment.overallRiskScore}</div>
-                    <span className={`risk-level-tag ${riskAssessment.riskLevel.toLowerCase()}`}>
-                      {riskAssessment.riskLevel}
+              {/* Dashtrap 4 Top Metric KPI Cards */}
+              <div className="dashtrap-kpi-grid">
+                {/* Card 1: Branch Risk Score (Blue Line) */}
+                <div className="kpi-card card-blue">
+                  <div className="kpi-card-head">
+                    <span className="kpi-title">BRANCH RISK SCORE</span>
+                    <span className={`kpi-badge badge-blue ${riskAssessment ? riskAssessment.riskLevel.toLowerCase() : ""}`}>
+                      {riskAssessment ? riskAssessment.riskLevel : "ASSESSED"}
                     </span>
-                    <span className="branch-subtag">{riskAssessment.branchName || selectedBranch}</span>
                   </div>
+                  <div className="kpi-value-row">
+                    <span className="kpi-main-val">
+                      {riskAssessment ? riskAssessment.overallRiskScore : 0}
+                    </span>
+                    <span className="kpi-unit">/ 100</span>
+                  </div>
+                  <div className="kpi-subtitle">
+                    Branch: <strong>{riskAssessment?.branchName || selectedBranch}</strong>
+                  </div>
+                  <div className="kpi-bottom-bar bar-blue"></div>
+                </div>
 
-                  <div className="risk-metrics-grid">
-                    <div className="metric-item">
-                      <span className="metric-label">Analyzed Findings</span>
-                      <span className="metric-val">{riskAssessment.totalFindings}</span>
-                    </div>
-                    <div className="metric-item">
-                      <span className="metric-label">Critical / High Severity</span>
-                      <span className="metric-val text-danger">
-                        {riskAssessment.criticalFindings} / {riskAssessment.highFindings}
-                      </span>
-                    </div>
-                    <div className="metric-item">
-                      <span className="metric-label">Files Evaluated in Branch</span>
-                      <span className="metric-val">{riskAssessment.totalFilesChanged}</span>
-                    </div>
-                    <div className="metric-item">
-                      <span className="metric-label">Branch Line Churn</span>
-                      <span className="metric-val">
-                        +{riskAssessment.totalAdditions} / -{riskAssessment.totalDeletions}
-                      </span>
-                    </div>
+                {/* Card 2: Defect Findings (Red Line) */}
+                <div className="kpi-card card-red">
+                  <div className="kpi-card-head">
+                    <span className="kpi-title">DEFECT FINDINGS</span>
+                    <span className="kpi-badge badge-red">PRIORITIZED</span>
                   </div>
-                </section>
-              )}
+                  <div className="kpi-value-row">
+                    <span className="kpi-main-val">
+                      {riskAssessment ? riskAssessment.totalFindings : findings.length}
+                    </span>
+                    <span className="kpi-unit">Issues</span>
+                  </div>
+                  <div className="kpi-subtitle text-danger">
+                    {riskAssessment
+                      ? `${riskAssessment.criticalFindings} Critical • ${riskAssessment.highFindings} High`
+                      : `${findings.length} Total Findings`}
+                  </div>
+                  <div className="kpi-bottom-bar bar-red"></div>
+                </div>
+
+                {/* Card 3: Branch Line Churn (Yellow Line) */}
+                <div className="kpi-card card-yellow">
+                  <div className="kpi-card-head">
+                    <span className="kpi-title">BRANCH LINE CHURN</span>
+                    <span className="kpi-badge badge-yellow">NET CHURN</span>
+                  </div>
+                  <div className="kpi-value-row">
+                    <span className="kpi-main-val churn-val">
+                      +{riskAssessment ? riskAssessment.totalAdditions.toLocaleString() : "0"}
+                      {" / "}
+                      -{riskAssessment ? riskAssessment.totalDeletions.toLocaleString() : "0"}
+                    </span>
+                  </div>
+                  <div className="kpi-subtitle">
+                    {riskAssessment ? `${riskAssessment.totalFilesChanged} Files Evaluated` : "Awaiting diff analysis"}
+                  </div>
+                  <div className="kpi-bottom-bar bar-yellow"></div>
+                </div>
+
+                {/* Card 4: Stability Health (Green Line) */}
+                <div className="kpi-card card-green">
+                  <div className="kpi-card-head">
+                    <span className="kpi-title">STABILITY HEALTH</span>
+                    <span className="kpi-badge badge-green">HEALTH INDEX</span>
+                  </div>
+                  <div className="kpi-value-row">
+                    <span className="kpi-main-val">
+                      {historicalMetrics ? historicalMetrics.repositoryStabilityIndex : 85}
+                    </span>
+                    <span className="kpi-unit">/ 100</span>
+                  </div>
+                  <div className="kpi-subtitle text-success">
+                    {historicalMetrics
+                      ? historicalMetrics.stabilityAssessment
+                      : "Stable branch changes"}
+                  </div>
+                  <div className="kpi-bottom-bar bar-green"></div>
+                </div>
+              </div>
 
               {/* AI Explanation based on Evidence */}
               {riskAssessment && riskAssessment.aiExplanation && (
@@ -1017,13 +1182,17 @@ export default function App() {
                     </p>
                   </div>
 
-                  {prioritizedList.length === 0 ? (
+                  {filteredPriorities.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>No critical risks detected in branch '{selectedBranch}'. Code checks passed!</p>
+                      <p>
+                        {searchTerm
+                          ? `No prioritized findings match "${searchTerm}".`
+                          : `No critical risks detected in branch '${selectedBranch}'. Code checks passed!`}
+                      </p>
                     </div>
                   ) : (
                     <div className="prioritized-list">
-                      {prioritizedList.map((item) => (
+                      {filteredPriorities.map((item) => (
                         <div key={item.id} className={`prioritized-card severity-${item.severity.toLowerCase()}`}>
                           <div className="prioritized-card-header">
                             <div className="header-badges">
@@ -1535,9 +1704,13 @@ export default function App() {
                     <h3>Static Evidence & Findings on '{selectedBranch}' ({findings.length})</h3>
                     <p>Raw findings detected across changesets and analyzed commits on this branch.</p>
                   </div>
-                  {findings.length === 0 ? (
+                  {filteredFindings.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>No active static security or quality findings in branch '{selectedBranch}'.</p>
+                      <p>
+                        {searchTerm
+                          ? `No findings match "${searchTerm}".`
+                          : `No active static security or quality findings in branch '${selectedBranch}'.`}
+                      </p>
                     </div>
                   ) : (
                     <div className="findings-table-wrap">
@@ -1553,7 +1726,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {findings.map((f) => (
+                          {filteredFindings.map((f) => (
                             <tr key={f.id}>
                               <td>
                                 <span className={getSeverityBadgeClass(f.severity)}>{f.severity}</span>
