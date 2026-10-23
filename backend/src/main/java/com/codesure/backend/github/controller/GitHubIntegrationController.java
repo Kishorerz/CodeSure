@@ -93,7 +93,10 @@ public class GitHubIntegrationController {
             List<Commit> branchCommits = gitHubService.getRepositoryCommits(id, branch);
             if (!branchCommits.isEmpty()) {
                 List<UUID> commitIds = branchCommits.stream().map(Commit::getId).toList();
-                return findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+                List<Finding> branchFindings = findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+                if (!branchFindings.isEmpty()) {
+                    return branchFindings;
+                }
             }
         }
         return findingJpaRepository.findByCodeChangeCommitRepositoryId(id);

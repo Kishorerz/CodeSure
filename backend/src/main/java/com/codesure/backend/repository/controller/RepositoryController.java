@@ -32,14 +32,14 @@ public class RepositoryController {
         return repositoryService.getAllRepositories();
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{id:[0-9a-fA-F\\-]{36}}")
     public RepositoryResponse getRepositoryById(
             @PathVariable UUID id
     ) {
         return repositoryService.getRepositoryById(id);
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/{id:[0-9a-fA-F\\-]{36}}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteRepository(@PathVariable UUID id) {
         repositoryService.deleteRepository(id);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import "./App.css";
 
 interface Repository {
@@ -25,6 +25,24 @@ interface Finding {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   lineNumber: number;
   analyzer: string;
+  priorityRank?: number;
+  rootCause?: string;
+  remediation?: string;
+  codeChange?: {
+    id?: string;
+    filePath?: string;
+    changeType?: string;
+    additions?: number;
+    deletions?: number;
+    commit?: {
+      id?: string;
+      sha?: string;
+      message?: string;
+      authorName?: string;
+      authorEmail?: string;
+      committedAt?: string;
+    };
+  };
 }
 
 interface PrioritizedFinding {
@@ -35,8 +53,8 @@ interface PrioritizedFinding {
   message: string;
   filePath: string;
   lineNumber: number;
-  commitSha: string;
-  commitMessage: string;
+  commitSha?: string;
+  commitMessage?: string;
   rootCause: string;
   remediation: string;
   criticalityReason: string;
@@ -521,6 +539,9 @@ export default function App() {
       setBranches((prev) => [...prev, cleanBranch]);
     }
 
+    // Immediately load existing branch findings & risk metrics from DB
+    loadBranchData(selectedRepo.id, cleanBranch);
+
     setLoadingCommits(true);
     try {
       const res = await fetch(
@@ -528,7 +549,11 @@ export default function App() {
         { method: "POST", headers: getHeaders() }
       );
 
-      if (!res.ok) {
+      if (res.ok) {
+        const data: Commit[] = await res.json();
+        setCommits(data);
+        loadBranchData(selectedRepo.id, cleanBranch);
+      } else {
         let errText = `Failed to sync commits for branch "${cleanBranch}"`;
         try {
           const errJson = await res.json();
@@ -536,15 +561,13 @@ export default function App() {
         } catch {
           errText = await res.text();
         }
-        throw new Error(errText);
+        if (errText.includes("API rate limit") || res.status === 403) {
+          setErrorMsg(errText);
+        }
       }
-
-      const data: Commit[] = await res.json();
-      setCommits(data);
-      loadBranchData(selectedRepo.id, cleanBranch);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setErrorMsg(err.message);
+        console.warn("Branch sync notice:", err.message);
       }
     } finally {
       setLoadingCommits(false);
@@ -684,29 +707,114 @@ export default function App() {
     return sim.sourceTotalChurn ?? sim.totalChurn ?? 0;
   };
 
-  const prioritizedList = riskAssessment?.prioritizedFindings || [];
+  // Bidirectional resilient bindings between prioritized findings and raw findings
+  const prioritizedList: PrioritizedFinding[] = useMemo(() => {
+    if (riskAssessment?.prioritizedFindings && riskAssessment.prioritizedFindings.length > 0) {
+      return riskAssessment.prioritizedFindings;
+    }
+    // Fallback if raw findings exist but risk assessment hasn't computed prioritized list yet
+    if (findings && findings.length > 0) {
+      return findings.map((f, idx) => ({
+        id: f.id,
+        priorityRank: f.priorityRank || idx + 1,
+        severity: f.severity,
+        ruleId: f.ruleId,
+        message: f.message,
+        filePath: f.codeChange?.filePath || "source file",
+        lineNumber: f.lineNumber,
+        rootCause: f.rootCause || "Potential issue flagged by static analysis pattern.",
+        remediation: f.remediation || "Review the modified line and sanitize inputs or adhere to secure coding patterns.",
+        criticalityReason: f.severity === "CRITICAL"
+          ? "Priority 1 (CRITICAL): Block merge immediately. Critical vulnerability or secret exposed."
+          : f.severity === "HIGH"
+          ? "Priority 2 (HIGH): Exploit risk present. Fix before production deployment."
+          : f.severity === "MEDIUM"
+          ? "Priority 3 (MEDIUM): Architectural or configuration exposure. Schedule prompt fix."
+          : "Priority 4 (LOW): Code quality/maintainability smell. Clean up during review.",
+        commitSha: f.codeChange?.commit?.sha ? f.codeChange.commit.sha.substring(0, 7) : undefined,
+        commitMessage: f.codeChange?.commit?.message || undefined,
+      }));
+    }
+    return [];
+  }, [riskAssessment, findings]);
 
-  const filteredPriorities = prioritizedList.filter((item) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      item.ruleId.toLowerCase().includes(term) ||
-      item.message.toLowerCase().includes(term) ||
-      (item.filePath && item.filePath.toLowerCase().includes(term)) ||
-      (item.rootCause && item.rootCause.toLowerCase().includes(term)) ||
-      (item.remediation && item.remediation.toLowerCase().includes(term))
-    );
-  });
+  const effectiveFindings: Finding[] = useMemo(() => {
+    if (findings && findings.length > 0) {
+      return findings;
+    }
+    // Fallback if riskAssessment has findings but raw findings list returned empty
+    if (riskAssessment?.prioritizedFindings && riskAssessment.prioritizedFindings.length > 0) {
+      return riskAssessment.prioritizedFindings.map((p) => ({
+        id: p.id,
+        severity: p.severity as any,
+        ruleId: p.ruleId,
+        message: p.message,
+        lineNumber: p.lineNumber,
+        analyzer: "SEMGREP",
+        priorityRank: p.priorityRank,
+        rootCause: p.rootCause,
+        remediation: p.remediation,
+        codeChange: {
+          id: p.id,
+          filePath: p.filePath,
+          changeType: "MODIFIED",
+          additions: 0,
+          deletions: 0,
+          commit: {
+            id: p.id,
+            sha: p.commitSha || "",
+            message: p.commitMessage || "",
+            authorName: "Developer",
+            authorEmail: "",
+            committedAt: new Date().toISOString(),
+          } as any,
+        } as any,
+      }));
+    }
+    return [];
+  }, [findings, riskAssessment]);
 
-  const filteredFindings = findings.filter((f) => {
-    if (!searchTerm.trim()) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      f.ruleId.toLowerCase().includes(term) ||
-      f.message.toLowerCase().includes(term) ||
-      f.analyzer.toLowerCase().includes(term)
-    );
-  });
+  const filteredPriorities = useMemo(() => {
+    return prioritizedList.filter((item) => {
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.toLowerCase().trim();
+      const rule = (item.ruleId || "").toLowerCase();
+      const msg = (item.message || "").toLowerCase();
+      const file = (item.filePath || "").toLowerCase();
+      const root = (item.rootCause || "").toLowerCase();
+      const rem = (item.remediation || "").toLowerCase();
+      const crit = (item.criticalityReason || "").toLowerCase();
+      const sev = (item.severity || "").toLowerCase();
+      return (
+        rule.includes(term) ||
+        msg.includes(term) ||
+        file.includes(term) ||
+        root.includes(term) ||
+        rem.includes(term) ||
+        crit.includes(term) ||
+        sev.includes(term)
+      );
+    });
+  }, [prioritizedList, searchTerm]);
+
+  const filteredFindings = useMemo(() => {
+    return effectiveFindings.filter((f) => {
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.toLowerCase().trim();
+      const rule = (f.ruleId || "").toLowerCase();
+      const msg = (f.message || "").toLowerCase();
+      const analyzer = (f.analyzer || "").toLowerCase();
+      const file = (f.codeChange?.filePath || "").toLowerCase();
+      const sev = (f.severity || "").toLowerCase();
+      return (
+        rule.includes(term) ||
+        msg.includes(term) ||
+        analyzer.includes(term) ||
+        file.includes(term) ||
+        sev.includes(term)
+      );
+    });
+  }, [effectiveFindings, searchTerm]);
 
   return (
     <div className="dashtrap-app">
@@ -1398,7 +1506,7 @@ export default function App() {
                   className={`tab-btn ${activeTab === "allFindings" ? "active" : ""}`}
                   onClick={() => setActiveTab("allFindings")}
                 >
-                  Raw Findings ({findings.length})
+                  Raw Findings ({effectiveFindings.length})
                 </button>
               </div>
 
@@ -1413,13 +1521,27 @@ export default function App() {
                     </p>
                   </div>
 
+                  {searchTerm && (
+                    <div className="active-filter-banner">
+                      <span>Filtering by: <strong>"{searchTerm}"</strong></span>
+                      <button type="button" className="btn-clear-filter" onClick={() => setSearchTerm("")}>
+                        ✕ Clear Filter
+                      </button>
+                    </div>
+                  )}
+
                   {filteredPriorities.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>
-                        {searchTerm
-                          ? `No prioritized findings match "${searchTerm}".`
-                          : `No critical risks detected in branch '${selectedBranch}'. Code checks passed!`}
-                      </p>
+                      {searchTerm ? (
+                        <div className="empty-filter-state">
+                          <p>No prioritized findings match "<strong>{searchTerm}</strong>".</p>
+                          <button type="button" className="btn-clear-search" onClick={() => setSearchTerm("")}>
+                            Clear Filter & View All ({prioritizedList.length}) Prioritized Items
+                          </button>
+                        </div>
+                      ) : (
+                        <p>No critical risks detected in branch '{selectedBranch}'. Code checks passed!</p>
+                      )}
                     </div>
                   ) : (
                     <div className="prioritized-list">
@@ -2237,16 +2359,31 @@ export default function App() {
               {activeTab === "allFindings" && (
                 <section className="findings-section">
                   <div className="section-intro">
-                    <h3>Static Evidence & Findings on '{selectedBranch}' ({findings.length})</h3>
+                    <h3>Static Evidence & Findings on '{selectedBranch}' ({effectiveFindings.length})</h3>
                     <p>Raw findings detected across changesets and analyzed commits on this branch.</p>
                   </div>
+
+                  {searchTerm && (
+                    <div className="active-filter-banner">
+                      <span>Filtering by: <strong>"{searchTerm}"</strong></span>
+                      <button type="button" className="btn-clear-filter" onClick={() => setSearchTerm("")}>
+                        ✕ Clear Filter
+                      </button>
+                    </div>
+                  )}
+
                   {filteredFindings.length === 0 ? (
                     <div className="empty-state-card">
-                      <p>
-                        {searchTerm
-                          ? `No findings match "${searchTerm}".`
-                          : `No active static security or quality findings in branch '${selectedBranch}'.`}
-                      </p>
+                      {searchTerm ? (
+                        <div className="empty-filter-state">
+                          <p>No findings match "<strong>{searchTerm}</strong>".</p>
+                          <button type="button" className="btn-clear-search" onClick={() => setSearchTerm("")}>
+                            Clear Filter & View All ({effectiveFindings.length}) Findings
+                          </button>
+                        </div>
+                      ) : (
+                        <p>No active static security or quality findings in branch '{selectedBranch}'.</p>
+                      )}
                     </div>
                   ) : (
                     <div className="findings-table-wrap">
@@ -2256,6 +2393,7 @@ export default function App() {
                             <th>Severity</th>
                             <th>Rule ID</th>
                             <th>Issue Message</th>
+                            <th>File Path</th>
                             <th>Line</th>
                             <th>Analyzer</th>
                             <th>Auto-Fix Action</th>
@@ -2268,9 +2406,12 @@ export default function App() {
                                 <span className={getSeverityBadgeClass(f.severity)}>{f.severity}</span>
                               </td>
                               <td><code>{f.ruleId}</code></td>
-                              <td>{f.message}</td>
+                              <td className="finding-msg-cell">{f.message}</td>
+                              <td className="finding-file-cell">
+                                <code>{f.codeChange?.filePath || "Global"}</code>
+                              </td>
                               <td>Line {f.lineNumber}</td>
-                              <td>{f.analyzer}</td>
+                              <td><span className="analyzer-tag">{f.analyzer}</span></td>
                               <td>
                                 <button
                                   type="button"

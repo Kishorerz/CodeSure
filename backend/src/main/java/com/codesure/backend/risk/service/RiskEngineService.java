@@ -57,6 +57,9 @@ public class RiskEngineService {
                 commits = branchCommits;
                 List<UUID> commitIds = commits.stream().map(Commit::getId).toList();
                 allFindings = findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+                if (allFindings.isEmpty()) {
+                    allFindings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);
+                }
             } else {
                 commits = commitJpaRepository.findByRepositoryIdOrderByCommittedAtDesc(repositoryId);
                 allFindings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);

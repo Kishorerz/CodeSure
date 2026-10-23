@@ -76,6 +76,9 @@ public class HistoricalMetricsService {
         List<UUID> commitIds = commits.stream().map(Commit::getId).toList();
         List<CodeChange> codeChanges = codeChangeJpaRepository.findByCommitIdIn(commitIds);
         List<Finding> findings = findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+        if (findings.isEmpty()) {
+            findings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);
+        }
 
         // Map commit -> code changes
         Map<UUID, List<CodeChange>> changesByCommit = codeChanges.stream()

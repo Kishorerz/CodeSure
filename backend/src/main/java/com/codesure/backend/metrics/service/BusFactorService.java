@@ -76,6 +76,9 @@ public class BusFactorService {
         List<UUID> commitIds = commits.stream().map(Commit::getId).toList();
         List<CodeChange> codeChanges = codeChangeJpaRepository.findByCommitIdIn(commitIds);
         List<Finding> findings = findingJpaRepository.findByCommitIdsOrderByPriorityRankAsc(commitIds);
+        if (findings.isEmpty()) {
+            findings = findingJpaRepository.findByCodeChangeCommitRepositoryId(repositoryId);
+        }
 
         Map<UUID, Commit> commitMap = commits.stream()
                 .collect(Collectors.toMap(Commit::getId, c -> c, (a, b) -> a));
