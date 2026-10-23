@@ -7,6 +7,8 @@ import com.codesure.backend.codechange.entity.CodeChange;
 import com.codesure.backend.codechange.repository.CodeChangeJpaRepository;
 import com.codesure.backend.finding.entity.Finding;
 import com.codesure.backend.finding.repository.FindingJpaRepository;
+import com.codesure.backend.github.dto.CreatePrResultDto;
+import com.codesure.backend.github.service.GitHubPrService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -21,17 +23,20 @@ public class AnalyzerController {
     private final CodeChangeJpaRepository codeChangeJpaRepository;
     private final FindingJpaRepository findingJpaRepository;
     private final RemediationFixService remediationFixService;
+    private final GitHubPrService gitHubPrService;
 
     public AnalyzerController(
             CodeAnalyzerService codeAnalyzerService,
             CodeChangeJpaRepository codeChangeJpaRepository,
             FindingJpaRepository findingJpaRepository,
-            RemediationFixService remediationFixService
+            RemediationFixService remediationFixService,
+            GitHubPrService gitHubPrService
     ) {
         this.codeAnalyzerService = codeAnalyzerService;
         this.codeChangeJpaRepository = codeChangeJpaRepository;
         this.findingJpaRepository = findingJpaRepository;
         this.remediationFixService = remediationFixService;
+        this.gitHubPrService = gitHubPrService;
     }
 
     @PostMapping("/scan-change/{codeChangeId}")
@@ -54,5 +59,14 @@ public class AnalyzerController {
     @GetMapping("/fix-suggestion/{findingId}")
     public FixSuggestionDto getFixSuggestion(@PathVariable UUID findingId) {
         return remediationFixService.generateFixSuggestion(findingId);
+    }
+
+    @PostMapping("/fix-suggestion/{findingId}/create-pr")
+    public CreatePrResultDto createFixPullRequest(
+            @PathVariable UUID findingId,
+            @RequestParam(required = false, defaultValue = "main") String targetBranch,
+            @RequestHeader(value = "X-GitHub-Token", required = false) String tokenHeader
+    ) {
+        return gitHubPrService.createFixPullRequest(findingId, targetBranch, tokenHeader);
     }
 }

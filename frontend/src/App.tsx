@@ -131,6 +131,39 @@ interface FixSuggestion {
   securityBestPractices: string[];
 }
 
+interface CreatePrResult {
+  success: boolean;
+  message: string;
+  prNumber?: number;
+  prUrl?: string;
+  branchName?: string;
+  targetBranch?: string;
+  headSha?: string;
+}
+
+interface MergeSimulation {
+  repositoryId: string;
+  sourceBranch: string;
+  targetBranch: string;
+  sourceRiskScore: number;
+  targetRiskScore: number;
+  deltaRiskScore: number;
+  sourceCriticalFindings: number;
+  targetCriticalFindings: number;
+  newCriticalFindings: number;
+  sourceHighFindings: number;
+  targetHighFindings: number;
+  newHighFindings: number;
+  sourceTotalFindings: number;
+  targetTotalFindings: number;
+  newTotalFindings: number;
+  sourceTotalChurn: number;
+  verdict: "SAFE_TO_MERGE" | "NEEDS_REVIEW" | "BLOCKED";
+  verdictReason: string;
+  blockers: string[];
+  recommendations: string[];
+}
+
 interface SiloedFile {
   filePath: string;
   dominantAuthor: string;
@@ -204,8 +237,21 @@ export default function App() {
   const [activeFixModal, setActiveFixModal] = useState<FixSuggestion | null>(null);
   const [loadingFixId, setLoadingFixId] = useState<string | null>(null);
   const [copiedDiff, setCopiedDiff] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<"priorities" | "historical" | "commits" | "allFindings">("priorities");
+  const [activeTab, setActiveTab] = useState<"priorities" | "simulation" | "historical" | "commits" | "allFindings">("priorities");
   const [searchTerm, setSearchTerm] = useState<string>("");
+
+  // Pre-Merge Simulation state
+  const [mergeSimulation, setMergeSimulation] = useState<MergeSimulation | null>(null);
+  const [loadingSimulation, setLoadingSimulation] = useState<boolean>(false);
+  const [simulationTargetBranch, setSimulationTargetBranch] = useState<string>("main");
+
+  // GitHub 1-Click Fix PR state
+  const [creatingPr, setCreatingPr] = useState<boolean>(false);
+  const [prResult, setPrResult] = useState<CreatePrResult | null>(null);
+
+  // Hotspot / Treemap interactive state
+  const [selectedHotspot, setSelectedHotspot] = useState<FileHotspot | null>(null);
+  const [hotspotFilter, setHotspotFilter] = useState<"ALL" | "CRITICAL" | "HIGH" | "MEDIUM" | "LOW">("ALL");
 
   // Build headers with optional X-GitHub-Token
   const getHeaders = (extra: Record<string, string> = {}) => {
@@ -305,6 +351,21 @@ export default function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setBusFactorData(data))
       .catch(() => setBusFactorData(null));
+
+    // Fetch pre-merge simulation
+    const effectiveTarget = simulationTargetBranch || "main";
+    loadMergeSimulation(repoId, branchName, effectiveTarget);
+  };
+
+  const loadMergeSimulation = (repoId: string, srcBranch: string, tgtBranch: string) => {
+    setLoadingSimulation(true);
+    const encSrc = encodeURIComponent(srcBranch);
+    const encTgt = encodeURIComponent(tgtBranch);
+    fetch(`${API_BASE}/api/repositories/${repoId}/merge-simulation?sourceBranch=${encSrc}&targetBranch=${encTgt}`, { headers: getHeaders() })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setMergeSimulation(data))
+      .catch(() => setMergeSimulation(null))
+      .finally(() => setLoadingSimulation(false));
   };
 
   const fetchBranches = async (repo: Repository) => {
@@ -557,6 +618,7 @@ export default function App() {
   const handleOpenFixModal = async (findingId: string) => {
     setLoadingFixId(findingId);
     setCopiedDiff(false);
+    setPrResult(null);
     try {
       const res = await fetch(`${API_BASE}/api/analyzer/fix-suggestion/${findingId}`, { headers: getHeaders() });
       if (res.ok) {
@@ -567,6 +629,31 @@ export default function App() {
       console.error("Failed to load fix suggestion", e);
     } finally {
       setLoadingFixId(null);
+    }
+  };
+
+  const handleCreatePr = async (findingId: string) => {
+    if (!selectedRepo) return;
+    setCreatingPr(true);
+    setPrResult(null);
+    try {
+      const target = selectedBranch || selectedRepo.defaultBranch || "main";
+      const res = await fetch(
+        `${API_BASE}/api/analyzer/fix-suggestion/${findingId}/create-pr?targetBranch=${encodeURIComponent(target)}`,
+        {
+          method: "POST",
+          headers: getHeaders({ "Content-Type": "application/json" }),
+        }
+      );
+      const data: CreatePrResult = await res.json();
+      setPrResult(data);
+    } catch (err: any) {
+      setPrResult({
+        success: false,
+        message: err?.message || "Failed to initiate GitHub Pull Request.",
+      });
+    } finally {
+      setCreatingPr(false);
     }
   };
 
@@ -739,6 +826,62 @@ export default function App() {
               </div>
             )}
 
+            {/* Autonomous 1-Click GitHub Remediation PR Section */}
+            <div className="fix-pr-card">
+              <div className="fix-pr-card-main">
+                <div className="fix-pr-text">
+                  <div className="fix-pr-title">🚀 Autonomous Remediation via GitHub Pull Request</div>
+                  <div className="fix-pr-desc">
+                    Instantly create a remediated branch (<code>codesure/fix-{activeFixModal.ruleId.toLowerCase()}</code>), commit this security patch, and submit a live Pull Request against <strong>{selectedBranch}</strong>.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn-pr-action"
+                  disabled={creatingPr}
+                  onClick={() => handleCreatePr(activeFixModal.findingId)}
+                >
+                  {creatingPr ? "⏳ Opening PR on GitHub..." : "🚀 1-Click Create Fix PR"}
+                </button>
+              </div>
+
+              {prResult && (
+                <div className={`fix-pr-result ${prResult.success ? "pr-success" : "pr-error"}`}>
+                  {prResult.success ? (
+                    <div>
+                      <div className="pr-result-heading">
+                        <span>✅ Pull Request Created Successfully!</span>
+                        <span className="pr-number-pill">PR #{prResult.prNumber}</span>
+                      </div>
+                      <p className="pr-result-details">
+                        Targeting branch <strong>{prResult.targetBranch}</strong> from fix branch <code>{prResult.branchName}</code>.
+                      </p>
+                      {prResult.prUrl && (
+                        <a
+                          href={prResult.prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-view-pr"
+                        >
+                          Open Pull Request #{prResult.prNumber} on GitHub ↗
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="pr-result-heading text-danger">
+                        <span>⚠️ Failed to Create Pull Request</span>
+                      </div>
+                      <p className="pr-result-details">{prResult.message}</p>
+                      <small className="pr-token-hint">
+                        💡 Verify that your GitHub Personal Access Token is saved in the top bar with <code>repo</code> write permission.
+                      </small>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="modal-actions">
               <button
                 type="button"
@@ -780,6 +923,19 @@ export default function App() {
               <span className="nav-icon">📊</span>
               <span>Dashboard</span>
               {prioritizedList.length > 0 && <span className="nav-counter">{prioritizedList.length}</span>}
+            </button>
+            <button
+              type="button"
+              className={`sidebar-nav-item ${activeTab === "simulation" ? "active" : ""}`}
+              onClick={() => setActiveTab("simulation")}
+            >
+              <span className="nav-icon">⚖️</span>
+              <span>Merge Simulation</span>
+              {mergeSimulation && (
+                <span className={`nav-counter verdict-tag-${mergeSimulation.verdict.toLowerCase()}`}>
+                  {mergeSimulation.verdict === "SAFE_TO_MERGE" ? "PASS" : mergeSimulation.verdict === "BLOCKED" ? "BLOCK" : "WARN"}
+                </span>
+              )}
             </button>
             <button
               type="button"
@@ -1018,6 +1174,78 @@ export default function App() {
                       Analyzing development stage changes on <strong>{selectedBranch}</strong> before merging into main.
                     </span>
                   </div>
+
+                  {/* Pre-Merge Impact Quality Gate Summary Bar */}
+                  <div className="merge-gate-summary-bar">
+                    <div className="gate-title-group">
+                      <span className="gate-icon">⚖️</span>
+                      <div className="gate-text-col">
+                        <div className="gate-title">PRE-MERGE IMPACT SIMULATOR</div>
+                        <div className="gate-subtitle">
+                          Simulating merge of <code>{selectedBranch}</code> into target branch:
+                          <select
+                            className="gate-target-select"
+                            value={simulationTargetBranch}
+                            onChange={(e) => {
+                              const newTarget = e.target.value;
+                              setSimulationTargetBranch(newTarget);
+                              if (selectedRepo) {
+                                loadMergeSimulation(selectedRepo.id, selectedBranch, newTarget);
+                              }
+                            }}
+                          >
+                            {branches.map((b) => (
+                              <option key={b} value={b}>
+                                {b} {b === selectedRepo.defaultBranch ? "(default target)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="gate-verdict-group">
+                      {loadingSimulation ? (
+                        <span className="gate-loading">⏳ Simulating merge impact...</span>
+                      ) : mergeSimulation ? (
+                        <>
+                          <span className={`verdict-pill verdict-${mergeSimulation.verdict.toLowerCase()}`}>
+                            {mergeSimulation.verdict === "SAFE_TO_MERGE" && "🛡️ SAFE TO MERGE"}
+                            {mergeSimulation.verdict === "NEEDS_REVIEW" && "⚠️ NEEDS REVIEW"}
+                            {mergeSimulation.verdict === "BLOCKED" && "⛔ MERGE BLOCKED"}
+                          </span>
+
+                          <div className="gate-delta-stat">
+                            <span className="delta-label">Risk Delta:</span>
+                            <span className={`delta-val ${mergeSimulation.deltaRiskScore > 0 ? "delta-pos" : "delta-zero"}`}>
+                              {mergeSimulation.deltaRiskScore > 0 ? `+${mergeSimulation.deltaRiskScore}` : mergeSimulation.deltaRiskScore} pts
+                            </span>
+                          </div>
+
+                          <div className="gate-findings-stat">
+                            <span className="gate-crit-tag">+{mergeSimulation.newCriticalFindings} Crit</span>
+                            <span className="gate-high-tag">+{mergeSimulation.newHighFindings} High</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="btn-inspect-gate"
+                            onClick={() => setActiveTab("simulation")}
+                          >
+                            Full Impact Simulation ➔
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-inspect-gate"
+                          onClick={() => selectedRepo && loadMergeSimulation(selectedRepo.id, selectedBranch, simulationTargetBranch)}
+                        >
+                          Run Simulation ➔
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1120,6 +1348,12 @@ export default function App() {
                   onClick={() => setActiveTab("priorities")}
                 >
                   Prioritized Action Items ({prioritizedList.length})
+                </button>
+                <button
+                  className={`tab-btn ${activeTab === "simulation" ? "active" : ""}`}
+                  onClick={() => setActiveTab("simulation")}
+                >
+                  ⚖️ Pre-Merge Simulation {mergeSimulation ? `(${mergeSimulation.verdict})` : ""}
                 </button>
                 <button
                   className={`tab-btn ${activeTab === "historical" ? "active" : ""}`}
@@ -1244,6 +1478,189 @@ export default function App() {
                           )}
                         </div>
                       ))}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* TAB 2: PRE-MERGE IMPACT SIMULATOR & QUALITY GATE */}
+              {activeTab === "simulation" && (
+                <section className="simulation-section">
+                  <div className="section-intro">
+                    <div className="section-intro-top">
+                      <div>
+                        <h3>Pre-Merge Impact Simulator & Quality Gate</h3>
+                        <p>
+                          Assess merge readiness, delta risk score, and gate blockers before merging branch <strong>{selectedBranch}</strong> into target <strong>{simulationTargetBranch}</strong>.
+                        </p>
+                      </div>
+                      <div className="simulation-controls">
+                        <label className="target-select-label">Target Branch:</label>
+                        <select
+                          className="target-select-input"
+                          value={simulationTargetBranch}
+                          onChange={(e) => {
+                            const newTarget = e.target.value;
+                            setSimulationTargetBranch(newTarget);
+                            if (selectedRepo) {
+                              loadMergeSimulation(selectedRepo.id, selectedBranch, newTarget);
+                            }
+                          }}
+                        >
+                          {branches.map((b) => (
+                            <option key={b} value={b}>
+                              {b} {b === selectedRepo.defaultBranch ? "(default target)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="btn-resimulate"
+                          disabled={loadingSimulation}
+                          onClick={() => selectedRepo && loadMergeSimulation(selectedRepo.id, selectedBranch, simulationTargetBranch)}
+                        >
+                          {loadingSimulation ? "⏳ Simulating..." : "↻ Re-Run Simulation"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {mergeSimulation ? (
+                    <div className="simulation-content">
+                      {/* Executive Verdict Banner */}
+                      <div className={`verdict-banner verdict-banner-${mergeSimulation.verdict.toLowerCase()}`}>
+                        <div className="verdict-banner-head">
+                          <div className="verdict-main-pill">
+                            {mergeSimulation.verdict === "SAFE_TO_MERGE" && "🛡️ QUALITY GATE PASSED — SAFE TO MERGE"}
+                            {mergeSimulation.verdict === "NEEDS_REVIEW" && "⚠️ QUALITY GATE WARNING — PEER REVIEW REQUIRED"}
+                            {mergeSimulation.verdict === "BLOCKED" && "⛔ QUALITY GATE FAILED — AUTOMATED MERGE BLOCKED"}
+                          </div>
+                          <span className="verdict-status-tag">{mergeSimulation.verdict}</span>
+                        </div>
+                        <p className="verdict-reason">{mergeSimulation.verdictReason}</p>
+                      </div>
+
+                      {/* Side-by-side Branch Risk Differential */}
+                      <div className="simulation-diff-grid">
+                        {/* Target Branch Baseline */}
+                        <div className="sim-branch-card">
+                          <div className="sim-branch-head">
+                            <span className="branch-role-tag">TARGET BASELINE</span>
+                            <h4>{mergeSimulation.targetBranch}</h4>
+                          </div>
+                          <div className="sim-metric-val">
+                            <span className="sim-score">{mergeSimulation.targetRiskScore}</span>
+                            <span className="sim-score-total">/100</span>
+                          </div>
+                          <div className="sim-stats-list">
+                            <div className="sim-stat-row">
+                              <span>Critical Vulnerabilities:</span>
+                              <strong>{mergeSimulation.targetCriticalFindings}</strong>
+                            </div>
+                            <div className="sim-stat-row">
+                              <span>High Severity Issues:</span>
+                              <strong>{mergeSimulation.targetHighFindings}</strong>
+                            </div>
+                            <div className="sim-stat-row">
+                              <span>Total Baseline Defects:</span>
+                              <strong>{mergeSimulation.targetTotalFindings}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Arrow Delta Indicator */}
+                        <div className="sim-delta-card">
+                          <div className="delta-arrow-icon">➔</div>
+                          <div className="delta-headline">
+                            <span className="delta-label">PROJECTED IMPACT</span>
+                            <div className={`delta-huge ${mergeSimulation.deltaRiskScore > 0 ? "text-danger" : "text-success"}`}>
+                              {mergeSimulation.deltaRiskScore > 0 ? `+${mergeSimulation.deltaRiskScore}` : mergeSimulation.deltaRiskScore}
+                              <span className="delta-unit"> pts</span>
+                            </div>
+                          </div>
+                          <div className="delta-breakdown">
+                            <div className="delta-item">
+                              <span>New Critical Defects:</span>
+                              <strong className={mergeSimulation.newCriticalFindings > 0 ? "text-danger" : "text-success"}>
+                                +{mergeSimulation.newCriticalFindings}
+                              </strong>
+                            </div>
+                            <div className="delta-item">
+                              <span>New High Defects:</span>
+                              <strong className={mergeSimulation.newHighFindings > 0 ? "text-danger" : "text-success"}>
+                                +{mergeSimulation.newHighFindings}
+                              </strong>
+                            </div>
+                            <div className="delta-item">
+                              <span>Net New Issues:</span>
+                              <strong>+{mergeSimulation.newTotalFindings}</strong>
+                            </div>
+                            <div className="delta-item">
+                              <span>Lines of Churn:</span>
+                              <strong>{mergeSimulation.sourceTotalChurn.toLocaleString()} lines</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Source Branch Proposed */}
+                        <div className="sim-branch-card">
+                          <div className="sim-branch-head">
+                            <span className="branch-role-tag">PROPOSED SOURCE</span>
+                            <h4>{mergeSimulation.sourceBranch}</h4>
+                          </div>
+                          <div className="sim-metric-val">
+                            <span className="sim-score">{mergeSimulation.sourceRiskScore}</span>
+                            <span className="sim-score-total">/100</span>
+                          </div>
+                          <div className="sim-stats-list">
+                            <div className="sim-stat-row">
+                              <span>Critical Vulnerabilities:</span>
+                              <strong className={mergeSimulation.sourceCriticalFindings > 0 ? "text-danger" : ""}>
+                                {mergeSimulation.sourceCriticalFindings}
+                              </strong>
+                            </div>
+                            <div className="sim-stat-row">
+                              <span>High Severity Issues:</span>
+                              <strong className={mergeSimulation.sourceHighFindings > 0 ? "text-danger" : ""}>
+                                {mergeSimulation.sourceHighFindings}
+                              </strong>
+                            </div>
+                            <div className="sim-stat-row">
+                              <span>Total Branch Defects:</span>
+                              <strong>{mergeSimulation.sourceTotalFindings}</strong>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Blockers & Recommendations */}
+                      <div className="sim-guidance-grid">
+                        <div className="sim-blockers-card">
+                          <h4>🚫 Quality Gate Blockers ({mergeSimulation.blockers.length})</h4>
+                          {mergeSimulation.blockers.length === 0 ? (
+                            <p className="text-success">✓ No automated merge blockers detected. All quality gate thresholds satisfied.</p>
+                          ) : (
+                            <ul className="sim-list blockers-list">
+                              {mergeSimulation.blockers.map((b, i) => (
+                                <li key={i}>{b}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        <div className="sim-recs-card">
+                          <h4>💡 Prescriptive Remediation Actions</h4>
+                          <ul className="sim-list recs-list">
+                            {mergeSimulation.recommendations.map((r, i) => (
+                              <li key={i}>{r}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="empty-state-card">
+                      <p>Run pre-merge simulation to compare risk impact against target branch.</p>
                     </div>
                   )}
                 </section>
@@ -1474,6 +1891,118 @@ export default function App() {
                           </div>
                         </div>
                       )}
+
+                      {/* Interactive Visual Codebase Risk Heatmap & Treemap */}
+                      <div className="hotspots-heatmap-section">
+                        <div className="heatmap-header">
+                          <div>
+                            <h4 className="sub-heading">🔥 Interactive Codebase Risk Heatmap & Hotspot Treemap</h4>
+                            <p className="sub-desc">
+                              Proportional visualization of repository risk hotspots. Tile area correlates with total churn velocity, while color represents accumulated defect severity. Click any tile to inspect file details and jump directly to findings.
+                            </p>
+                          </div>
+                          <div className="heatmap-filter-bar">
+                            <span className="filter-title">Filter Risk:</span>
+                            {(["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((lvl) => (
+                              <button
+                                key={lvl}
+                                type="button"
+                                className={`heatmap-filter-pill ${hotspotFilter === lvl ? "active" : ""}`}
+                                onClick={() => setHotspotFilter(lvl)}
+                              >
+                                {lvl}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {historicalMetrics.topHotspots.length === 0 ? (
+                          <div className="empty-state-card">
+                            <p>No hotspots detected. Repository changes are evenly distributed.</p>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="heatmap-tiles-grid">
+                              {historicalMetrics.topHotspots
+                                .filter((h) => hotspotFilter === "ALL" || h.riskLevel === hotspotFilter)
+                                .map((h, idx) => {
+                                  const isSelected = selectedHotspot?.filePath === h.filePath;
+                                  const fileName = h.filePath.split("/").pop() || h.filePath;
+                                  const dirPath = h.filePath.includes("/") ? h.filePath.substring(0, h.filePath.lastIndexOf("/")) : "";
+                                  const flexGrow = Math.max(1, Math.min(6, Math.round(h.totalChurn / 50)));
+
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className={`treemap-tile tile-${h.riskLevel.toLowerCase()} ${isSelected ? "tile-selected" : ""}`}
+                                      style={{ flex: `${flexGrow} 1 200px` }}
+                                      onClick={() => setSelectedHotspot(isSelected ? null : h)}
+                                      title={`${h.filePath}\nRisk: ${h.riskLevel} (Score: ${h.hotspotScore})\nChurn: +${h.additions}/-${h.deletions}`}
+                                    >
+                                      <div className="tile-head">
+                                        <span className="tile-title">{fileName}</span>
+                                        <span className="tile-score">{h.hotspotScore}</span>
+                                      </div>
+                                      {dirPath && <div className="tile-dir">{dirPath}</div>}
+                                      <div className="tile-foot">
+                                        <span className="tile-churn">+{h.additions} / -{h.deletions}</span>
+                                        <span className="tile-findings">
+                                          {h.criticalFindings > 0 ? `🚨 ${h.criticalFindings} Crit` : `${h.findingsCount} Issues`}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+
+                            {/* Hotspot File Inspector Card */}
+                            {selectedHotspot && (
+                              <div className="hotspot-inspector-card">
+                                <div className="inspector-top">
+                                  <div className="inspector-meta">
+                                    <span className="inspector-icon">🎯</span>
+                                    <div>
+                                      <h4 className="inspector-filepath">{selectedHotspot.filePath}</h4>
+                                      <div className="inspector-stats-row">
+                                        <span className={`badge ${selectedHotspot.riskLevel.toLowerCase()}`}>
+                                          {selectedHotspot.riskLevel} RISK
+                                        </span>
+                                        <span className="inspector-pill">Hotspot Score: <strong>{selectedHotspot.hotspotScore}</strong></span>
+                                        <span className="inspector-pill">{selectedHotspot.changeCount} Commits</span>
+                                        <span className="inspector-pill">Churn: +{selectedHotspot.additions} / -{selectedHotspot.deletions}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="inspector-actions">
+                                    <button
+                                      type="button"
+                                      className="btn-filter-findings"
+                                      onClick={() => {
+                                        setSearchTerm(selectedHotspot.filePath);
+                                        setActiveTab("allFindings");
+                                      }}
+                                    >
+                                      🔍 View Raw Findings for this File ➔
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-close-inspector"
+                                      onClick={() => setSelectedHotspot(null)}
+                                      title="Close inspector"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="inspector-body">
+                                  <strong>Prescriptive Remediation Strategy:</strong>
+                                  <p>{selectedHotspot.recommendation}</p>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
 
                       {/* File Hotspots Table */}
                       <div className="hotspots-section">
