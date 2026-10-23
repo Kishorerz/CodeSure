@@ -45,4 +45,21 @@ public class MergeSimulationDto {
     private List<String> mergeBlockers;
     private List<String> recommendations;
     private String executiveSummary;
+
+    // Aliases for seamless frontend contract compatibility
+    public String getVerdict() {
+        return mergeVerdict;
+    }
+
+    public List<String> getBlockers() {
+        return mergeBlockers != null ? mergeBlockers : List.of();
+    }
+
+    public double getDeltaRiskScore() {
+        return riskScoreDelta;
+    }
+
+    public int getSourceTotalChurn() {
+        return totalChurn;
+    }
 }

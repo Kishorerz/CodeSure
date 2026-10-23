@@ -143,11 +143,13 @@ interface CreatePrResult {
 
 interface MergeSimulation {
   repositoryId: string;
+  repositoryName?: string;
   sourceBranch: string;
   targetBranch: string;
   sourceRiskScore: number;
   targetRiskScore: number;
-  deltaRiskScore: number;
+  deltaRiskScore?: number;
+  riskScoreDelta?: number;
   sourceCriticalFindings: number;
   targetCriticalFindings: number;
   newCriticalFindings: number;
@@ -157,11 +159,15 @@ interface MergeSimulation {
   sourceTotalFindings: number;
   targetTotalFindings: number;
   newTotalFindings: number;
-  sourceTotalChurn: number;
-  verdict: "SAFE_TO_MERGE" | "NEEDS_REVIEW" | "BLOCKED";
+  sourceTotalChurn?: number;
+  totalChurn?: number;
+  verdict?: "SAFE_TO_MERGE" | "NEEDS_REVIEW" | "BLOCKED";
+  mergeVerdict?: "SAFE_TO_MERGE" | "NEEDS_REVIEW" | "BLOCKED";
   verdictReason: string;
-  blockers: string[];
-  recommendations: string[];
+  blockers?: string[];
+  mergeBlockers?: string[];
+  recommendations?: string[];
+  executiveSummary?: string;
 }
 
 interface SiloedFile {
@@ -398,6 +404,7 @@ export default function App() {
     setSelectedRepo(repo);
     setErrorMsg(null);
     setShowCustomBranch(false);
+    setSimulationTargetBranch(repo.defaultBranch || "main");
 
     const initialBranch = branchToSelect || repo.defaultBranch || "main";
     setSelectedBranch(initialBranch);
@@ -655,6 +662,26 @@ export default function App() {
     } finally {
       setCreatingPr(false);
     }
+  };
+
+  const getSimVerdict = (sim: MergeSimulation | null): "SAFE_TO_MERGE" | "NEEDS_REVIEW" | "BLOCKED" => {
+    if (!sim) return "SAFE_TO_MERGE";
+    return sim.verdict || sim.mergeVerdict || "SAFE_TO_MERGE";
+  };
+
+  const getSimDelta = (sim: MergeSimulation | null): number => {
+    if (!sim) return 0;
+    return sim.deltaRiskScore ?? sim.riskScoreDelta ?? 0;
+  };
+
+  const getSimBlockers = (sim: MergeSimulation | null): string[] => {
+    if (!sim) return [];
+    return sim.blockers || sim.mergeBlockers || [];
+  };
+
+  const getSimChurn = (sim: MergeSimulation | null): number => {
+    if (!sim) return 0;
+    return sim.sourceTotalChurn ?? sim.totalChurn ?? 0;
   };
 
   const prioritizedList = riskAssessment?.prioritizedFindings || [];
@@ -932,8 +959,8 @@ export default function App() {
               <span className="nav-icon">⚖️</span>
               <span>Merge Simulation</span>
               {mergeSimulation && (
-                <span className={`nav-counter verdict-tag-${mergeSimulation.verdict.toLowerCase()}`}>
-                  {mergeSimulation.verdict === "SAFE_TO_MERGE" ? "PASS" : mergeSimulation.verdict === "BLOCKED" ? "BLOCK" : "WARN"}
+                <span className={`nav-counter verdict-tag-${getSimVerdict(mergeSimulation).toLowerCase()}`}>
+                  {getSimVerdict(mergeSimulation) === "SAFE_TO_MERGE" ? "PASS" : getSimVerdict(mergeSimulation) === "BLOCKED" ? "BLOCK" : "WARN"}
                 </span>
               )}
             </button>
@@ -1209,16 +1236,16 @@ export default function App() {
                         <span className="gate-loading">⏳ Simulating merge impact...</span>
                       ) : mergeSimulation ? (
                         <>
-                          <span className={`verdict-pill verdict-${mergeSimulation.verdict.toLowerCase()}`}>
-                            {mergeSimulation.verdict === "SAFE_TO_MERGE" && "🛡️ SAFE TO MERGE"}
-                            {mergeSimulation.verdict === "NEEDS_REVIEW" && "⚠️ NEEDS REVIEW"}
-                            {mergeSimulation.verdict === "BLOCKED" && "⛔ MERGE BLOCKED"}
+                          <span className={`verdict-pill verdict-${getSimVerdict(mergeSimulation).toLowerCase()}`}>
+                            {getSimVerdict(mergeSimulation) === "SAFE_TO_MERGE" && "🛡️ SAFE TO MERGE"}
+                            {getSimVerdict(mergeSimulation) === "NEEDS_REVIEW" && "⚠️ NEEDS REVIEW"}
+                            {getSimVerdict(mergeSimulation) === "BLOCKED" && "⛔ MERGE BLOCKED"}
                           </span>
 
                           <div className="gate-delta-stat">
                             <span className="delta-label">Risk Delta:</span>
-                            <span className={`delta-val ${mergeSimulation.deltaRiskScore > 0 ? "delta-pos" : "delta-zero"}`}>
-                              {mergeSimulation.deltaRiskScore > 0 ? `+${mergeSimulation.deltaRiskScore}` : mergeSimulation.deltaRiskScore} pts
+                            <span className={`delta-val ${getSimDelta(mergeSimulation) > 0 ? "delta-pos" : "delta-zero"}`}>
+                              {getSimDelta(mergeSimulation) > 0 ? `+${getSimDelta(mergeSimulation)}` : getSimDelta(mergeSimulation)} pts
                             </span>
                           </div>
 
@@ -1353,7 +1380,7 @@ export default function App() {
                   className={`tab-btn ${activeTab === "simulation" ? "active" : ""}`}
                   onClick={() => setActiveTab("simulation")}
                 >
-                  ⚖️ Pre-Merge Simulation {mergeSimulation ? `(${mergeSimulation.verdict})` : ""}
+                  ⚖️ Pre-Merge Simulation {mergeSimulation ? `(${getSimVerdict(mergeSimulation)})` : ""}
                 </button>
                 <button
                   className={`tab-btn ${activeTab === "historical" ? "active" : ""}`}
@@ -1526,138 +1553,148 @@ export default function App() {
                   </div>
 
                   {mergeSimulation ? (
-                    <div className="simulation-content">
-                      {/* Executive Verdict Banner */}
-                      <div className={`verdict-banner verdict-banner-${mergeSimulation.verdict.toLowerCase()}`}>
-                        <div className="verdict-banner-head">
-                          <div className="verdict-main-pill">
-                            {mergeSimulation.verdict === "SAFE_TO_MERGE" && "🛡️ QUALITY GATE PASSED — SAFE TO MERGE"}
-                            {mergeSimulation.verdict === "NEEDS_REVIEW" && "⚠️ QUALITY GATE WARNING — PEER REVIEW REQUIRED"}
-                            {mergeSimulation.verdict === "BLOCKED" && "⛔ QUALITY GATE FAILED — AUTOMATED MERGE BLOCKED"}
-                          </div>
-                          <span className="verdict-status-tag">{mergeSimulation.verdict}</span>
-                        </div>
-                        <p className="verdict-reason">{mergeSimulation.verdictReason}</p>
-                      </div>
+                    (() => {
+                      const v = getSimVerdict(mergeSimulation);
+                      const d = getSimDelta(mergeSimulation);
+                      const blockers = getSimBlockers(mergeSimulation);
+                      const recs = mergeSimulation.recommendations || [];
+                      const churn = getSimChurn(mergeSimulation);
 
-                      {/* Side-by-side Branch Risk Differential */}
-                      <div className="simulation-diff-grid">
-                        {/* Target Branch Baseline */}
-                        <div className="sim-branch-card">
-                          <div className="sim-branch-head">
-                            <span className="branch-role-tag">TARGET BASELINE</span>
-                            <h4>{mergeSimulation.targetBranch}</h4>
-                          </div>
-                          <div className="sim-metric-val">
-                            <span className="sim-score">{mergeSimulation.targetRiskScore}</span>
-                            <span className="sim-score-total">/100</span>
-                          </div>
-                          <div className="sim-stats-list">
-                            <div className="sim-stat-row">
-                              <span>Critical Vulnerabilities:</span>
-                              <strong>{mergeSimulation.targetCriticalFindings}</strong>
+                      return (
+                        <div className="simulation-content">
+                          {/* Executive Verdict Banner */}
+                          <div className={`verdict-banner verdict-banner-${v.toLowerCase()}`}>
+                            <div className="verdict-banner-head">
+                              <div className="verdict-main-pill">
+                                {v === "SAFE_TO_MERGE" && "🛡️ QUALITY GATE PASSED — SAFE TO MERGE"}
+                                {v === "NEEDS_REVIEW" && "⚠️ QUALITY GATE WARNING — PEER REVIEW REQUIRED"}
+                                {v === "BLOCKED" && "⛔ QUALITY GATE FAILED — AUTOMATED MERGE BLOCKED"}
+                              </div>
+                              <span className="verdict-status-tag">{v}</span>
                             </div>
-                            <div className="sim-stat-row">
-                              <span>High Severity Issues:</span>
-                              <strong>{mergeSimulation.targetHighFindings}</strong>
-                            </div>
-                            <div className="sim-stat-row">
-                              <span>Total Baseline Defects:</span>
-                              <strong>{mergeSimulation.targetTotalFindings}</strong>
-                            </div>
+                            <p className="verdict-reason">{mergeSimulation.verdictReason}</p>
                           </div>
-                        </div>
 
-                        {/* Arrow Delta Indicator */}
-                        <div className="sim-delta-card">
-                          <div className="delta-arrow-icon">➔</div>
-                          <div className="delta-headline">
-                            <span className="delta-label">PROJECTED IMPACT</span>
-                            <div className={`delta-huge ${mergeSimulation.deltaRiskScore > 0 ? "text-danger" : "text-success"}`}>
-                              {mergeSimulation.deltaRiskScore > 0 ? `+${mergeSimulation.deltaRiskScore}` : mergeSimulation.deltaRiskScore}
-                              <span className="delta-unit"> pts</span>
+                          {/* Side-by-side Branch Risk Differential */}
+                          <div className="simulation-diff-grid">
+                            {/* Target Branch Baseline */}
+                            <div className="sim-branch-card">
+                              <div className="sim-branch-head">
+                                <span className="branch-role-tag">TARGET BASELINE</span>
+                                <h4>{mergeSimulation.targetBranch}</h4>
+                              </div>
+                              <div className="sim-metric-val">
+                                <span className="sim-score">{mergeSimulation.targetRiskScore}</span>
+                                <span className="sim-score-total">/100</span>
+                              </div>
+                              <div className="sim-stats-list">
+                                <div className="sim-stat-row">
+                                  <span>Critical Vulnerabilities:</span>
+                                  <strong>{mergeSimulation.targetCriticalFindings}</strong>
+                                </div>
+                                <div className="sim-stat-row">
+                                  <span>High Severity Issues:</span>
+                                  <strong>{mergeSimulation.targetHighFindings}</strong>
+                                </div>
+                                <div className="sim-stat-row">
+                                  <span>Total Baseline Defects:</span>
+                                  <strong>{mergeSimulation.targetTotalFindings}</strong>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          <div className="delta-breakdown">
-                            <div className="delta-item">
-                              <span>New Critical Defects:</span>
-                              <strong className={mergeSimulation.newCriticalFindings > 0 ? "text-danger" : "text-success"}>
-                                +{mergeSimulation.newCriticalFindings}
-                              </strong>
-                            </div>
-                            <div className="delta-item">
-                              <span>New High Defects:</span>
-                              <strong className={mergeSimulation.newHighFindings > 0 ? "text-danger" : "text-success"}>
-                                +{mergeSimulation.newHighFindings}
-                              </strong>
-                            </div>
-                            <div className="delta-item">
-                              <span>Net New Issues:</span>
-                              <strong>+{mergeSimulation.newTotalFindings}</strong>
-                            </div>
-                            <div className="delta-item">
-                              <span>Lines of Churn:</span>
-                              <strong>{mergeSimulation.sourceTotalChurn.toLocaleString()} lines</strong>
-                            </div>
-                          </div>
-                        </div>
 
-                        {/* Source Branch Proposed */}
-                        <div className="sim-branch-card">
-                          <div className="sim-branch-head">
-                            <span className="branch-role-tag">PROPOSED SOURCE</span>
-                            <h4>{mergeSimulation.sourceBranch}</h4>
-                          </div>
-                          <div className="sim-metric-val">
-                            <span className="sim-score">{mergeSimulation.sourceRiskScore}</span>
-                            <span className="sim-score-total">/100</span>
-                          </div>
-                          <div className="sim-stats-list">
-                            <div className="sim-stat-row">
-                              <span>Critical Vulnerabilities:</span>
-                              <strong className={mergeSimulation.sourceCriticalFindings > 0 ? "text-danger" : ""}>
-                                {mergeSimulation.sourceCriticalFindings}
-                              </strong>
+                            {/* Arrow Delta Indicator */}
+                            <div className="sim-delta-card">
+                              <div className="delta-arrow-icon">➔</div>
+                              <div className="delta-headline">
+                                <span className="delta-label">PROJECTED IMPACT</span>
+                                <div className={`delta-huge ${d > 0 ? "text-danger" : "text-success"}`}>
+                                  {d > 0 ? `+${d}` : d}
+                                  <span className="delta-unit"> pts</span>
+                                </div>
+                              </div>
+                              <div className="delta-breakdown">
+                                <div className="delta-item">
+                                  <span>New Critical Defects:</span>
+                                  <strong className={mergeSimulation.newCriticalFindings > 0 ? "text-danger" : "text-success"}>
+                                    +{mergeSimulation.newCriticalFindings}
+                                  </strong>
+                                </div>
+                                <div className="delta-item">
+                                  <span>New High Defects:</span>
+                                  <strong className={mergeSimulation.newHighFindings > 0 ? "text-danger" : "text-success"}>
+                                    +{mergeSimulation.newHighFindings}
+                                  </strong>
+                                </div>
+                                <div className="delta-item">
+                                  <span>Net New Issues:</span>
+                                  <strong>+{mergeSimulation.newTotalFindings}</strong>
+                                </div>
+                                <div className="delta-item">
+                                  <span>Lines of Churn:</span>
+                                  <strong>{churn.toLocaleString()} lines</strong>
+                                </div>
+                              </div>
                             </div>
-                            <div className="sim-stat-row">
-                              <span>High Severity Issues:</span>
-                              <strong className={mergeSimulation.sourceHighFindings > 0 ? "text-danger" : ""}>
-                                {mergeSimulation.sourceHighFindings}
-                              </strong>
-                            </div>
-                            <div className="sim-stat-row">
-                              <span>Total Branch Defects:</span>
-                              <strong>{mergeSimulation.sourceTotalFindings}</strong>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
 
-                      {/* Blockers & Recommendations */}
-                      <div className="sim-guidance-grid">
-                        <div className="sim-blockers-card">
-                          <h4>🚫 Quality Gate Blockers ({mergeSimulation.blockers.length})</h4>
-                          {mergeSimulation.blockers.length === 0 ? (
-                            <p className="text-success">✓ No automated merge blockers detected. All quality gate thresholds satisfied.</p>
-                          ) : (
-                            <ul className="sim-list blockers-list">
-                              {mergeSimulation.blockers.map((b, i) => (
-                                <li key={i}>{b}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
+                            {/* Source Branch Proposed */}
+                            <div className="sim-branch-card">
+                              <div className="sim-branch-head">
+                                <span className="branch-role-tag">PROPOSED SOURCE</span>
+                                <h4>{mergeSimulation.sourceBranch}</h4>
+                              </div>
+                              <div className="sim-metric-val">
+                                <span className="sim-score">{mergeSimulation.sourceRiskScore}</span>
+                                <span className="sim-score-total">/100</span>
+                              </div>
+                              <div className="sim-stats-list">
+                                <div className="sim-stat-row">
+                                  <span>Critical Vulnerabilities:</span>
+                                  <strong className={mergeSimulation.sourceCriticalFindings > 0 ? "text-danger" : ""}>
+                                    {mergeSimulation.sourceCriticalFindings}
+                                  </strong>
+                                </div>
+                                <div className="sim-stat-row">
+                                  <span>High Severity Issues:</span>
+                                  <strong className={mergeSimulation.sourceHighFindings > 0 ? "text-danger" : ""}>
+                                    {mergeSimulation.sourceHighFindings}
+                                  </strong>
+                                </div>
+                                <div className="sim-stat-row">
+                                  <span>Total Branch Defects:</span>
+                                  <strong>{mergeSimulation.sourceTotalFindings}</strong>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
 
-                        <div className="sim-recs-card">
-                          <h4>💡 Prescriptive Remediation Actions</h4>
-                          <ul className="sim-list recs-list">
-                            {mergeSimulation.recommendations.map((r, i) => (
-                              <li key={i}>{r}</li>
-                            ))}
-                          </ul>
+                          {/* Blockers & Recommendations */}
+                          <div className="sim-guidance-grid">
+                            <div className="sim-blockers-card">
+                              <h4>🚫 Quality Gate Blockers ({blockers.length})</h4>
+                              {blockers.length === 0 ? (
+                                <p className="text-success">✓ No automated merge blockers detected. All quality gate thresholds satisfied.</p>
+                              ) : (
+                                <ul className="sim-list blockers-list">
+                                  {blockers.map((b, i) => (
+                                    <li key={i}>{b}</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+
+                            <div className="sim-recs-card">
+                              <h4>💡 Prescriptive Remediation Actions</h4>
+                              <ul className="sim-list recs-list">
+                                {recs.map((r, i) => (
+                                  <li key={i}>{r}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
+                      );
+                    })()
                   ) : (
                     <div className="empty-state-card">
                       <p>Run pre-merge simulation to compare risk impact against target branch.</p>
