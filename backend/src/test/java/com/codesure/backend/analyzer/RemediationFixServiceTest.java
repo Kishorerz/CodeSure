@@ -77,4 +77,44 @@ class RemediationFixServiceTest {
         assertTrue(fix.getAfterSnippet().contains("PreparedStatement pstmt"));
         assertTrue(fix.getUnifiedDiff().contains("+"));
     }
+
+    @Test
+    void testAwsKeyFixGeneration() {
+        testFinding.setRuleId("secret.cloud.aws-access-key");
+        when(findingJpaRepository.findById(findingId)).thenReturn(Optional.of(testFinding));
+
+        FixSuggestionDto fix = remediationFixService.generateFixSuggestion(findingId);
+
+        assertNotNull(fix);
+        assertEquals("HIGH", fix.getConfidenceLevel());
+        assertTrue(fix.getTitle().contains("AWS Access Key"));
+        assertTrue(fix.getAfterSnippet().contains("AWS_ACCESS_KEY_ID"));
+        assertTrue(fix.getUnifiedDiff().contains("+String awsAccessKey"));
+    }
+
+    @Test
+    void testReactXssFixGeneration() {
+        testFinding.setRuleId("ts.react.dangerously-set-inner-html");
+        when(findingJpaRepository.findById(findingId)).thenReturn(Optional.of(testFinding));
+
+        FixSuggestionDto fix = remediationFixService.generateFixSuggestion(findingId);
+
+        assertNotNull(fix);
+        assertTrue(fix.getTitle().contains("DOMPurify"));
+        assertTrue(fix.getAfterSnippet().contains("DOMPurify.sanitize"));
+        assertTrue(fix.getUnifiedDiff().contains("+import DOMPurify from 'dompurify'"));
+    }
+
+    @Test
+    void testPythonPickleFixGeneration() {
+        testFinding.setRuleId("python.security.insecure-deserialization");
+        when(findingJpaRepository.findById(findingId)).thenReturn(Optional.of(testFinding));
+
+        FixSuggestionDto fix = remediationFixService.generateFixSuggestion(findingId);
+
+        assertNotNull(fix);
+        assertTrue(fix.getTitle().contains("JSON Deserialization"));
+        assertTrue(fix.getAfterSnippet().contains("json.loads"));
+        assertTrue(fix.getUnifiedDiff().contains("+import json"));
+    }
 }

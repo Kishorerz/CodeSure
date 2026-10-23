@@ -29,7 +29,21 @@ public class RemediationFixService {
                 : "src/main/AppService.java";
         int line = finding.getLineNumber() > 0 ? finding.getLineNumber() : 1;
 
-        if (ruleId.contains("hardcoded-secret")) {
+        if (ruleId.contains("aws-access-key")) {
+            return buildAwsKeyFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("github-token")) {
+            return buildGitHubTokenFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("command-injection")) {
+            return buildCommandInjectionFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("dangerously-set-inner-html")) {
+            return buildDangerouslySetInnerHTMLFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("insecure-deserialization")) {
+            return buildPickleFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("subprocess-shell-true")) {
+            return buildSubprocessShellFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("dom-xss-eval")) {
+            return buildDomXssEvalFix(findingId, ruleId, filePath, line);
+        } else if (ruleId.contains("hardcoded-secret")) {
             return buildHardcodedSecretFix(findingId, ruleId, filePath, line);
         } else if (ruleId.contains("sql-injection")) {
             return buildSqlInjectionFix(findingId, ruleId, filePath, line);
@@ -332,6 +346,228 @@ public class RemediationFixService {
                 .securityBestPractices(List.of(
                         "Use SLF4J / Logback with parameterized logging (log.info(\"{}\", val)).",
                         "Never log sensitive user data or passwords."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildAwsKeyFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("// Line %d in %s\nString awsAccessKey = \"AKIAIOSFODNN7EXAMPLE\";", line, filePath);
+        String after = "// Secure: Retrieve AWS credentials via AWS IAM Roles or environment variables\n" +
+                "String awsAccessKey = System.getenv(\"AWS_ACCESS_KEY_ID\");\n\n" +
+                "// Recommended: Use DefaultCredentialsProvider which checks IAM instance profiles automatically:\n" +
+                "// AmazonS3 s3 = AmazonS3ClientBuilder.standard().withCredentials(new DefaultAWSCredentialsProviderChain()).build();";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,1 +%d,2 @@\n-String awsAccessKey = \"AKIAIOSFODNN7EXAMPLE\";\n+String awsAccessKey = System.getenv(\"AWS_ACCESS_KEY_ID\");",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Revoke and Externalize AWS Access Key")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("Hardcoded AWS keys committed to version control can be scraped by automated bots in seconds. Externalizing to IAM Instance Profiles or environment variables prevents account compromise.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Deactivate and delete the exposed AKIA key immediately in AWS IAM Console.",
+                        "Use AWS Secrets Manager or IAM Roles for Amazon EC2 / ECS instead of static keys.",
+                        "Check CloudTrail logs for unauthorized API calls performed with the compromised key."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildGitHubTokenFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("// Line %d in %s\nconst token = \"ghp_abcdefghijklmnopqrstuvwxyz0123456789\";", line, filePath);
+        String after = "// Secure: Inject GitHub Token via environment variable\n" +
+                "const token = process.env.GITHUB_TOKEN;\n" +
+                "if (!token) {\n" +
+                "  throw new Error('GITHUB_TOKEN environment variable is required');\n" +
+                "}";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,1 +%d,4 @@\n-const token = \"ghp_abcdefghijklmnopqrstuvwxyz0123456789\";\n+const token = process.env.GITHUB_TOKEN;\n+if (!token) throw new Error('Missing GITHUB_TOKEN');",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Revoke and Inject GitHub Token via Environment")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("Exposed GitHub personal access tokens grant unauthorized repository access and pull request modification rights. Rotate the token and inject via process.env.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Revoke the token immediately at github.com/settings/tokens.",
+                        "Use fine-grained Personal Access Tokens with the minimum required repository permissions.",
+                        "Add .env to your repository's .gitignore file."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildCommandInjectionFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("// Line %d in %s - Vulnerable shell command concatenation\n" +
+                "const { exec } = require('child_process');\n" +
+                "exec('ping -c 4 ' + targetHost, (err, stdout) => { ... });", line, filePath);
+        String after = "// Secure: Use execFile or spawn with argument array to avoid invoking system shell\n" +
+                "const { execFile } = require('child_process');\n" +
+                "execFile('ping', ['-c', '4', targetHost], (err, stdout) => {\n" +
+                "  if (err) return console.error(err);\n" +
+                "  console.log(stdout);\n" +
+                "});";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,2 +%d,3 @@\n" +
+                "-exec('ping -c 4 ' + targetHost, (err, stdout) => { ... });\n" +
+                "+const { execFile } = require('child_process');\n" +
+                "+execFile('ping', ['-c', '4', targetHost], (err, stdout) => { ... });",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Bypass Shell Parsing with execFile / spawn Argument Arrays")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("String concatenation in child_process.exec allows command chaining (e.g. '; rm -rf /'). Using execFile or spawn ensures user input is passed as a safe literal argument, not shell code.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Never pass user-controlled input into shell interpreters (/bin/sh, cmd.exe).",
+                        "Validate user arguments against strict regular expressions (e.g. IP address or hostname format).",
+                        "Prefer native Node.js APIs or libraries over external shell utilities whenever possible."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildDangerouslySetInnerHTMLFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("// Line %d in %s - Unsanitized XSS injection\n" +
+                "<div dangerouslySetInnerHTML={{ __html: userProvidedHtml }} />", line, filePath);
+        String after = "// Secure: Sanitize HTML with DOMPurify before rendering\n" +
+                "import DOMPurify from 'dompurify';\n\n" +
+                "const cleanHtml = DOMPurify.sanitize(userProvidedHtml);\n" +
+                "<div dangerouslySetInnerHTML={{ __html: cleanHtml }} />";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,1 +%d,4 @@\n" +
+                "-<div dangerouslySetInnerHTML={{ __html: userProvidedHtml }} />\n" +
+                "+import DOMPurify from 'dompurify';\n" +
+                "+const cleanHtml = DOMPurify.sanitize(userProvidedHtml);\n" +
+                "+<div dangerouslySetInnerHTML={{ __html: cleanHtml }} />",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Sanitize Raw HTML with DOMPurify to Prevent XSS")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("dangerouslySetInnerHTML renders raw markup, enabling malicious users to inject <script> tags or onerror handlers. DOMPurify strips active exploit payloads before DOM insertion.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Install and configure dompurify (npm install dompurify @types/dompurify).",
+                        "Render standard React components and text nodes instead of raw HTML whenever feasible.",
+                        "Implement Content Security Policy (CSP) headers to block unauthorized script execution."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildPickleFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("# Line %d in %s - Insecure pickle deserialization\n" +
+                "import pickle\n" +
+                "data = pickle.loads(raw_user_payload)", line, filePath);
+        String after = "# Secure: Use safe serialization like JSON or Protocol Buffers\n" +
+                "import json\n\n" +
+                "# json.loads does not execute arbitrary Python bytecode\n" +
+                "data = json.loads(raw_user_payload.decode('utf-8'))";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,2 +%d,3 @@\n" +
+                "-import pickle\n-data = pickle.loads(raw_user_payload)\n" +
+                "+import json\n+data = json.loads(raw_user_payload.decode('utf-8'))",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Replace Python pickle with Safe JSON Deserialization")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("Python's pickle format can execute arbitrary code by design via __reduce__ methods. Deserializing untrusted pickle streams allows attackers to achieve complete remote system takeover.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Never unpickle data received from untrusted clients, network sockets, or caches.",
+                        "Use JSON, MessagePack, or Protocol Buffers for cross-service data interchange.",
+                        "Sign serialized messages with HMAC if binary caching is strictly required."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildSubprocessShellFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("# Line %d in %s - Shell metacharacter injection\n" +
+                "import subprocess\n" +
+                "subprocess.run(f\"backup.sh {user_folder}\", shell=True)", line, filePath);
+        String after = "# Secure: Disable shell=True and pass arguments as an explicit list\n" +
+                "import subprocess\n\n" +
+                "# Arguments are passed directly to execve without /bin/sh interpolation\n" +
+                "subprocess.run([\"./backup.sh\", user_folder], shell=False, check=True)";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,2 +%d,3 @@\n" +
+                "-subprocess.run(f\"backup.sh {user_folder}\", shell=True)\n" +
+                "+subprocess.run([\"./backup.sh\", user_folder], shell=False, check=True)",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Disable shell=True in Subprocess Invocation")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("When shell=True is set, Python routes the string through a system shell, allowing attackers to inject command delimiters (; || && `) into user_folder.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Always set shell=False (the default in subprocess).",
+                        "Pass command arguments as an array/list of strings rather than a single formatted string.",
+                        "Use shlex.quote() only if dynamic shell expansion is unavoidable."
+                ))
+                .build();
+    }
+
+    private FixSuggestionDto buildDomXssEvalFix(UUID findingId, String ruleId, String filePath, int line) {
+        String before = String.format("// Line %d in %s - Insecure dynamic evaluation\n" +
+                "const data = eval('(' + userJsonInput + ')');\n" +
+                "document.write('<div>Welcome ' + userName + '</div>');", line, filePath);
+        String after = "// Secure: Parse structured data with JSON.parse and assign textContent safely\n" +
+                "const data = JSON.parse(userJsonInput);\n\n" +
+                "const userDiv = document.createElement('div');\n" +
+                "userDiv.textContent = 'Welcome ' + userName;\n" +
+                "document.body.appendChild(userDiv);";
+        String diff = String.format("--- a/%s\n+++ b/%s\n@@ -%d,2 +%d,4 @@\n" +
+                "-const data = eval('(' + userJsonInput + ')');\n-document.write('<div>Welcome ' + userName + '</div>');\n" +
+                "+const data = JSON.parse(userJsonInput);\n+const el = document.createElement('div');\n+el.textContent = 'Welcome ' + userName;\n+document.body.appendChild(el);",
+                filePath, filePath, line, line);
+
+        return FixSuggestionDto.builder()
+                .findingId(findingId)
+                .ruleId(ruleId)
+                .filePath(filePath)
+                .lineNumber(line)
+                .title("Replace eval() and document.write() with Safe DOM Methods")
+                .beforeSnippet(before)
+                .afterSnippet(after)
+                .unifiedDiff(diff)
+                .explanation("eval() and document.write() execute input as live JavaScript inside the client's session. JSON.parse and textContent prevent script execution while safely rendering data.")
+                .confidenceLevel("HIGH")
+                .securityBestPractices(List.of(
+                        "Ban eval(), Function(), and document.write() in your ESLint configuration (no-eval, no-implied-eval).",
+                        "Always use JSON.parse() when decoding JSON payloads.",
+                        "Use textContent instead of innerHTML to avoid XSS injections."
                 ))
                 .build();
     }
